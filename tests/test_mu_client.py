@@ -53,7 +53,7 @@ def test_kill_api_get_params():
     session.get.return_value = FakeResponse(payload={"success": True})
     client = MUClient("u", "p", session=session)
     assert client.kill(123, "Alice") == {"success": True}
-    assert session.get.call_args.kwargs["params"] == {"do": "kill", "threadid": 123, "username": "Alice"}
+    assert session.get.call_args.args[0] == "https://www.mafiauniverse.com/forums/modbot/api/death/?do=kill&threadid=123&username=Alice"
 
 
 def test_post_id_from_final_url_and_history_location():

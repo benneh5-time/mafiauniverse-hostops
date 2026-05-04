@@ -2,7 +2,7 @@
 
 Standalone Discord bot for MafiaUniverse host operations.
 
-Uses plain `requests` for MafiaUniverse, Google Sheets for game inputs, and SQLite for game configuration, deaths, event audit logs, and manual ITA dedupe. Google Sheets are input-only by default; `!pull_ita` and `!push_ita` can round-trip ITA settings between the sheet and MU.
+Uses the shared `mafiauniverse-client` package for common MafiaUniverse forum operations, Google Sheets for game inputs, and SQLite for game configuration, deaths, event audit logs, and manual ITA dedupe. Google Sheets are input-only by default; `!pull_ita` and `!push_ita` can round-trip ITA settings between the sheet and MU.
 
 ## Setup
 

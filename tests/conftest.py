@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from uuid import uuid4
+
 import pytest
 
 from host_ops.db import HostOpsDB
@@ -7,8 +10,16 @@ from host_ops.models import GameState, ITASettings, Player
 
 
 @pytest.fixture
-def db(tmp_path):
-    return HostOpsDB(tmp_path / "host_ops.db")
+def db():
+    db_path = Path.cwd() / f".test_host_ops_{uuid4().hex}.db"
+    try:
+        yield HostOpsDB(db_path)
+    finally:
+        for path in db_path.parent.glob(f"{db_path.name}*"):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 @pytest.fixture

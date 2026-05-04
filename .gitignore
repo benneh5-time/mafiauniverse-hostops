@@ -19,6 +19,7 @@ data/
 
 # Python
 __pycache__/
+.pytest_tmp/
 *.py[cod]
 *.pyo
 *.pyd
