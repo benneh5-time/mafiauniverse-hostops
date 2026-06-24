@@ -37,11 +37,13 @@ def create_bot():
     mu_client = MUClient(settings.mu_username, settings.mu_password)
 
     _csv_path = Path(__file__).parent / "database" / "mu_user_ids.csv"
-    # Maps lowercased username -> (original_username, mu_user_id)
+    # Maps lowercased username -> (original_username, pfp_id)
     _mu_user_ids: dict[str, tuple[str, int]] = {}
     with _csv_path.open(newline="", encoding="utf-8") as _f:
         for row in csv.DictReader(_f):
-            _mu_user_ids[row["username"].casefold()] = (row["username"], int(row["mu_user_id"]))
+            pfp_id = row.get("pfp_id", "").strip()
+            if pfp_id:
+                _mu_user_ids[row["username"].casefold()] = (row["username"], int(pfp_id))
 
     host.register(bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client)
     actions.register(bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=settings.live_mode)
