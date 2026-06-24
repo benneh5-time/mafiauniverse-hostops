@@ -6,7 +6,10 @@ import logging
 import discord
 from discord.ext import commands
 
-from .commands import actions, host, info
+import csv
+from pathlib import Path
+
+from .commands import actions, host, info, rolepm
 from .config import load_settings
 from .db import HostOpsDB
 from .mu_client import MUClient
@@ -33,9 +36,17 @@ def create_bot():
     sheet_reader = SheetReader(settings.google_credentials_path)
     mu_client = MUClient(settings.mu_username, settings.mu_password)
 
+    _csv_path = Path(__file__).parent / "database" / "mu_user_ids.csv"
+    # Maps lowercased username -> (original_username, mu_user_id)
+    _mu_user_ids: dict[str, tuple[str, int]] = {}
+    with _csv_path.open(newline="", encoding="utf-8") as _f:
+        for row in csv.DictReader(_f):
+            _mu_user_ids[row["username"].casefold()] = (row["username"], int(row["mu_user_id"]))
+
     host.register(bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client)
     actions.register(bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=settings.live_mode)
     info.register(bot, db=db, sheet_reader=sheet_reader)
+    rolepm.register(bot, mu_user_ids=_mu_user_ids)
 
     async def resolve_manual_ita(*, cfg, player_name: str, post_id: str) -> None:
         await actions.resolve_action(

@@ -1,5 +1,5 @@
-# Claude context (local only)
-CLAUDE.md
+# Local files
+*.MD
 
 # Secrets & credentials
 .env
