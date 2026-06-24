@@ -64,6 +64,9 @@ def create_bot():
 
     @bot.check
     def _guild_channel_check(ctx):
+        from .commands.rolepm import ROLEPM_CHANNEL_ID
+        if ctx.channel.id == ROLEPM_CHANNEL_ID:
+            return True
         if settings.allowed_guild_ids and ctx.guild and ctx.guild.id not in settings.allowed_guild_ids:
             return False
         if settings.allowed_channel_ids and ctx.channel.id not in settings.allowed_channel_ids:
