@@ -11,7 +11,7 @@ You are [B][COLOR="#008000"]{player}[/COLOR][/B], a [B][COLOR="#008000"]Town $Ro
 
 [I]$Flavor[/I]
 
-[B][U]You have the following abilities starting Night 0:[/U][/B]
+[B][U]You have the following abilities:[/U][/B]
 [LIST=1][*][B]Very Cool Ability!!![/B] — [I]tags[/I]
 Ability that's very cool
 
@@ -27,7 +27,7 @@ You are [B][COLOR="#FF0000"]{player}[/COLOR][/B], a [B][COLOR="#FF0000"]Mafia $R
 
 [I]$Flavor[/I]
 
-[B][U]You have the following abilities starting Night 0:[/U][/B]
+[B][U]You have the following abilities:[/U][/B]
 [LIST=1][*][B]Very Cool Ability!!![/B] — [I]tags[/I]
 Ability that's very cool
 
