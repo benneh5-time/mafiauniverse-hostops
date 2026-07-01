@@ -91,6 +91,31 @@ class PostedReply:
 
 
 @dataclass(slots=True)
+class BombResolveResult:
+    bomber: Player
+    bombee: Player
+    mu_response_bomber: Any = None
+    mu_response_bombee: Any = None
+    announcement_post_id: str | None = None
+    threadmark_ok: bool = False
+    dry_run: bool = True
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def build_announcement(self, reason: str = "") -> str:
+        from .resolver import build_death_block
+
+        reason_text = f"\n\n{reason.strip()}" if reason and reason.strip() else ""
+        blocks = "\n\n".join(build_death_block(p) for p in (self.bomber, self.bombee))
+        return (
+            "[CENTER][TITLE][B]A bomb goes off![/B][/TITLE][/CENTER]\n\n"
+            f"{blocks}{reason_text}"
+        )
+
+    def threadmark_name(self) -> str:
+        return f"A bomb goes off! {self.bomber.player} and {self.bombee.player} are dead"
+
+
+@dataclass(slots=True)
 class ResolveResult:
     success: bool
     target_name: str

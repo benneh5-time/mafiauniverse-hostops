@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from host_ops.models import GameState, ITASettings, Player, Protection
-from host_ops.resolver import resolve_death
+from host_ops.resolver import ResolutionError, resolve_bomb, resolve_death
 
 
 def test_successful_kill(basic_state):
@@ -40,3 +42,53 @@ def test_player_specific_override():
     result = resolve_death(target_name="Bob", event_type="ita", phase="any", state=state, rng=lambda: 0.8)
     assert result.success
     assert result.hit_pct == 90.0
+
+
+def test_bomb_resolves_both_targets(basic_state):
+    result = resolve_bomb(bomber_name="Alice", bombee_name="Bob", state=basic_state)
+    assert result.bomber.player == "Alice"
+    assert result.bombee.player == "Bob"
+
+
+def test_bomb_unknown_bomber_raises(basic_state):
+    with pytest.raises(ResolutionError, match="Unknown player: Carol"):
+        resolve_bomb(bomber_name="Carol", bombee_name="Bob", state=basic_state)
+
+
+def test_bomb_unknown_bombee_raises(basic_state):
+    with pytest.raises(ResolutionError, match="Unknown player: Carol"):
+        resolve_bomb(bomber_name="Alice", bombee_name="Carol", state=basic_state)
+
+
+def test_bomb_already_dead_bomber_raises(basic_state):
+    with pytest.raises(ResolutionError, match="Alice is already dead"):
+        resolve_bomb(bomber_name="Alice", bombee_name="Bob", state=basic_state, is_dead=lambda name: name == "Alice")
+
+
+def test_bomb_already_dead_bombee_raises(basic_state):
+    with pytest.raises(ResolutionError, match="Bob is already dead"):
+        resolve_bomb(bomber_name="Alice", bombee_name="Bob", state=basic_state, is_dead=lambda name: name == "Bob")
+
+
+def test_bomb_same_target_twice_raises(basic_state):
+    with pytest.raises(ResolutionError, match="cannot be the same player"):
+        resolve_bomb(bomber_name="Alice", bombee_name="Alice", state=basic_state)
+
+
+def test_bomb_announcement_has_bomb_header_and_both_deaths(basic_state):
+    result = resolve_bomb(bomber_name="Alice", bombee_name="Bob", state=basic_state)
+    announcement = result.build_announcement(reason="Boom.")
+    assert "A bomb goes off!" in announcement
+    assert "Alice" in announcement
+    assert "Bob" in announcement
+    assert "Redacted Alice" in announcement
+    assert "Redacted Bob" in announcement
+    assert "Boom." in announcement
+
+
+def test_bomb_threadmark_name_mentions_both(basic_state):
+    result = resolve_bomb(bomber_name="Alice", bombee_name="Bob", state=basic_state)
+    name = result.threadmark_name()
+    assert "A bomb goes off!" in name
+    assert "Alice" in name
+    assert "Bob" in name

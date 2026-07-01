@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from collections.abc import Callable
 
-from .models import GameState, ITASettings, Player, Protection, ResolveResult, normalize_name
+from .models import BombResolveResult, GameState, ITASettings, Player, Protection, ResolveResult, normalize_name
 
 
 class ResolutionError(ValueError):
@@ -50,23 +50,42 @@ def ita_hit_pct(target: Player, phase: str, settings: list[ITASettings]) -> tupl
     return max(0.0, min(100.0, base + chosen.bonus - chosen.penalty)), False
 
 
+def build_death_block(target: Player) -> str:
+    return f"[B]{target.player}[/B] has died. [B]{target.player}[/B] was:\n\n[SPOILER]{target.redacted_role_pm}[/SPOILER]"
+
+
 def build_death_announcement(target: Player, event_type: str, reason: str = "") -> str:
     if event_type == "ita":
         header = "[CENTER][TITLE][B]An ITA hits![/B][/TITLE][/CENTER]"
+    elif event_type == "desperado":
+        header = "[CENTER][TITLE][B]A desperado shot rings out![/B][/TITLE][/CENTER]"
     else:
         header = "[CENTER][TITLE][B]A shot rings out![/B][/TITLE][/CENTER]"
     reason_text = f"\n\n{reason.strip()}" if reason and reason.strip() else ""
-    return (
-        f"{header}\n\n"
-        f"[B]{target.player}[/B] has died. [B]{target.player}[/B] was:{reason_text}\n\n"
-        f"[SPOILER]{target.redacted_role_pm}[/SPOILER]"
-    )
+    return f"{header}\n\n{build_death_block(target)}{reason_text}"
 
 
 def threadmark_name(target: Player, event_type: str) -> str:
-    label = "An ITA hits!" if event_type == "ita" else "A shot rings out!"
+    if event_type == "ita":
+        label = "An ITA hits!"
+    elif event_type == "desperado":
+        label = "A desperado shot rings out!"
+    else:
+        label = "A shot rings out!"
     suffix = f", {target.role_name}" if target.role_name else ""
     return f"{label} {target.player} is dead{suffix}"
+
+
+def resolve_bomb(*, bomber_name: str, bombee_name: str, state: GameState,
+                 is_dead: Callable[[str], bool] = lambda _name: False) -> BombResolveResult:
+    bomber = resolve_player(bomber_name, state.players)
+    bombee = resolve_player(bombee_name, state.players)
+    if bomber.key == bombee.key:
+        raise ResolutionError("Bomber and bombee cannot be the same player.")
+    for player in (bomber, bombee):
+        if is_dead(player.player) or not player.alive:
+            raise ResolutionError(f"{player.player} is already dead.")
+    return BombResolveResult(bomber=bomber, bombee=bombee)
 
 
 def resolve_death(*, target_name: str, event_type: str, phase: str, state: GameState,
