@@ -54,13 +54,13 @@ _MAFIA_PET_TEMPLATE = _MAFIA_TEMPLATE[: -len("[/QUOTE]")] + _PET_BLOCK + "[/QUOT
 _VT_TEMPLATE = """\
 [QUOTE][TITLE][CENTER]MU Anniversary 2026 Role PM[/CENTER][/TITLE]
 
-You are [B][COLOR="#008000"]{player}[/COLOR][/B], a [B][COLOR="#008000"]Vanilla Town[/COLOR][/B].
+You are [B][COLOR="#008000"]{player}[/COLOR][/B].
 
 [CENTER][CHARIMG]{img_url}[/CHARIMG][/CENTER]
 
 [I]{flavor}[/I]
 
-[B][U]You have no inherent abilities except your vote.[/U][/B][/QUOTE]"""
+You are a [B][COLOR="#008000"]Vanilla Villager[/COLOR][/B] and have no special abilities.[/QUOTE]"""
 
 
 def register(bot, *, mu_user_ids: dict[str, tuple[str, int]], mu_client) -> None:
@@ -129,7 +129,8 @@ def register(bot, *, mu_user_ids: dict[str, tuple[str, int]], mu_client) -> None
             await ctx.reply(f"No MU user found for `{name}`.")
             return
         original_username, img_url = looked_up
-        output = _VT_TEMPLATE.format(player=original_username, img_url=img_url, flavor=flavor)
+        role = _VT_TEMPLATE.format(player=original_username, img_url=img_url, flavor=flavor)
+        output = f"{role}\n\n[HTML]{role}[/HTML]"
         try:
             reply = await asyncio.to_thread(mu_client.post_reply, ROLE_DRAFT_THREAD_ID, output)
         except Exception as exc:
