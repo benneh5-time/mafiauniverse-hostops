@@ -48,7 +48,7 @@ def create_bot():
     host.register(bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client)
     actions.register(bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=settings.live_mode)
     info.register(bot, db=db, sheet_reader=sheet_reader)
-    rolepm.register(bot, mu_user_ids=_mu_user_ids)
+    rolepm.register(bot, mu_user_ids=_mu_user_ids, mu_client=mu_client)
 
     async def resolve_manual_ita(*, cfg, player_name: str, post_id: str) -> None:
         await actions.resolve_action(
