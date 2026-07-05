@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+
+from ..roles import rmx
 
 ROLEPM_CHANNEL_ID = 1519140610995392703
 
@@ -114,6 +117,14 @@ def register(bot, *, mu_user_ids: dict[str, tuple[str, int]], mu_client) -> None
     @bot.command(name="petwolf")
     async def petwolf(ctx, *, name: str):
         await _rolepm(ctx, name, _MAFIA_PET_TEMPLATE)
+
+    @bot.command(name="rmxrole")
+    async def rmxrole(ctx):
+        if ctx.channel.id != ROLEPM_CHANNEL_ID:
+            return
+        role = rmx.create_random_role("Village")
+        output = json.dumps(role, indent=2)
+        await ctx.reply(f"```\n{output}\n```")
 
     @bot.command(name="vt")
     async def vt(ctx, *, args: str):
