@@ -10,6 +10,85 @@ copying that logic here. Only depends on the standard library ``random``.
 
 import random
 
+# Role id -> human-readable name (from turbo_bot role_definitions.py tables).
+ROLE_NAMES = {
+    # Town
+    1: "Vanilla Town",
+    3: "Town Alignment Cop",
+    4: "Town Doctor",
+    6: "Town Miller",
+    8: "Town Role Cop",
+    10: "Town Vigilante",
+    12: "Town Roleblocker",
+    14: "Town Jailkeeper",
+    16: "Town Bodyguard",
+    18: "Town Tracker",
+    20: "Town Watcher",
+    22: "Town Mason",
+    23: "Town Lover",
+    25: "Town Neighbor",
+    27: "Town Innocent Child",
+    28: "Town Full Cop",
+    31: "Town Arsonist",
+    34: "Town Firefighter",
+    37: "Town Day Vigilante",
+    39: "Town Jack of All Trades",
+    41: "Town Universal Backup",
+    43: "Town Alignment Oracle",
+    44: "Town Role Oracle",
+    46: "Town Parity Cop",
+    48: "Town Bomber",
+    50: "Town Poisoner",
+    52: "Town Healer",
+    54: "Town Motion Detector",
+    56: "Town Voyeur",
+    58: "Town Treestump",
+    60: "Town Neapolitan",
+    63: "Town Day Desperado",
+    64: "Town Night Desperado",
+    65: "Town Vanilla Cop",
+    67: "Town Fruit Vendor",
+    69: "Town Inventor",
+    71: "Town Empowerer",
+    73: "Town Redirector",
+    75: "Town Power Role Killer",
+    # Mafia
+    2: "Mafia Goon",
+    7: "Mafia Godfather",
+    9: "Mafia Role Cop",
+    11: "Mafia Vigilante",
+    13: "Mafia Roleblocker",
+    15: "Mafia Jailkeeper",
+    17: "Mafia Bodyguard",
+    19: "Mafia Tracker",
+    21: "Mafia Watcher",
+    24: "Mafia Lover",
+    26: "Mafia Neighbor",
+    29: "Mafia Full Cop",
+    32: "Mafia Arsonist",
+    35: "Mafia Firefighter",
+    36: "Mafia Framer",
+    38: "Mafia Day Vigilante",
+    40: "Mafia Jack of All Trades",
+    42: "Mafia Universal Backup",
+    45: "Mafia Role Oracle",
+    47: "Mafia Parity Cop",
+    49: "Mafia Bomber",
+    51: "Mafia Poisoner",
+    53: "Mafia Healer",
+    55: "Mafia Motion Detector",
+    57: "Mafia Voyeur",
+    59: "Mafia Treestump",
+    61: "Mafia Neapolitan",
+    62: "Mafia Alignment Cop",
+    66: "Mafia Vanilla Cop",
+    68: "Mafia Fruit Vendor",
+    70: "Mafia Inventor",
+    72: "Mafia Empowerer",
+    74: "Mafia Redirector",
+    76: "Mafia Power Role Killer",
+}
+
 # Base role ids per faction (see turbo_bot role tables).
 possible_roles = {
     "Wolf": [
@@ -125,6 +204,7 @@ def create_random_role(faction):
 
     role = {
         "role": str(role_id),
+        "role_name": ROLE_NAMES.get(role_id, "Unknown"),
         **static_values,
     }
 
