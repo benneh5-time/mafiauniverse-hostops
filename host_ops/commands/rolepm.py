@@ -164,7 +164,7 @@ def register(bot, *, mu_user_ids: dict[str, tuple[str, int]], mu_client) -> None
         await ctx.reply(f"Posted `{original_username}`'s VT role: {link}")
 
     @bot.command(name="goon")
-    async def vt(ctx, *, args: str):
+    async def goon(ctx, *, args: str):
         if ctx.channel.id != ROLEPM_CHANNEL_ID:
             return
         if "|" not in args:
@@ -188,4 +188,4 @@ def register(bot, *, mu_user_ids: dict[str, tuple[str, int]], mu_client) -> None
             f"https://www.mafiauniverse.com/forums/threads/{ROLE_DRAFT_THREAD_ID}"
             + (f"?p={reply.post_id}#post{reply.post_id}" if reply.post_id else "")
         )
-        await ctx.reply(f"Posted `{original_username}`'s VT role: {link}")
+        await ctx.reply(f"Posted `{original_username}`'s Goon role: {link}")
