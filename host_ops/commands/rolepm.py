@@ -85,48 +85,65 @@ def register(bot, *, mu_user_ids: dict[str, tuple[str, int]], mu_client) -> None
         img_url = f"https://www.mafiauniverse.com/forums/image.php?u={user_id}"
         return original_username, img_url
 
-    async def _rolepm(ctx, name: str, template: str) -> None:
+    async def _rolepm(ctx, args: str, template: str) -> None:
         if ctx.channel.id != ROLEPM_CHANNEL_ID:
             return
+        if "|" in args:
+            name, flavor = args.split("|", 1)
+            name, flavor = name.strip(), flavor.strip()
+        else:
+            name, flavor = args.strip(), None
         looked_up = _lookup(name)
         if looked_up is None:
             await ctx.reply(f"No MU user found for `{name}`.")
             return
         original_username, img_url = looked_up
-        output = template.format(player=original_username, img_url=img_url)
-        await ctx.reply(f"```\n{output}\n```")
+        role = template.format(player=original_username, img_url=img_url)
+        if flavor is not None:
+            role = role.replace("$Flavor", flavor)
+        output = f"{role}\n\n[HTML]{role}[/HTML]"
+        try:
+            reply = await asyncio.to_thread(mu_client.post_reply, ROLE_DRAFT_THREAD_ID, output)
+        except Exception as exc:
+            await ctx.reply(f"Failed to post `{original_username}`'s role to MU: {exc}")
+            return
+        link = reply.final_url or (
+            f"https://www.mafiauniverse.com/forums/threads/{ROLE_DRAFT_THREAD_ID}"
+            + (f"?p={reply.post_id}#post{reply.post_id}" if reply.post_id else "")
+        )
+        await ctx.reply(f"Posted `{original_username}`'s role: {link}")
 
     @bot.command(name="town")
-    async def town(ctx, *, name: str):
-        await _rolepm(ctx, name, _TOWN_TEMPLATE)
+    async def town(ctx, *, args: str):
+        await _rolepm(ctx, args, _TOWN_TEMPLATE)
 
     @bot.command(name="villager")
-    async def villager(ctx, *, name: str):
-        await _rolepm(ctx, name, _TOWN_TEMPLATE)
+    async def villager(ctx, *, args: str):
+        await _rolepm(ctx, args, _TOWN_TEMPLATE)
 
     @bot.command(name="wolf")
-    async def wolf(ctx, *, name: str):
-        await _rolepm(ctx, name, _MAFIA_TEMPLATE)
+    async def wolf(ctx, *, args: str):
+        await _rolepm(ctx, args, _MAFIA_TEMPLATE)
 
     @bot.command(name="mafia")
-    async def mafia(ctx, *, name: str):
-        await _rolepm(ctx, name, _MAFIA_TEMPLATE)
+    async def mafia(ctx, *, args: str):
+        await _rolepm(ctx, args, _MAFIA_TEMPLATE)
 
     @bot.command(name="pettown")
-    async def pettown(ctx, *, name: str):
-        await _rolepm(ctx, name, _TOWN_PET_TEMPLATE)
+    async def pettown(ctx, *, args: str):
+        await _rolepm(ctx, args, _TOWN_PET_TEMPLATE)
 
     @bot.command(name="petmafia")
-    async def petmafia(ctx, *, name: str):
-        await _rolepm(ctx, name, _MAFIA_PET_TEMPLATE)
+    async def petmafia(ctx, *, args: str):
+        await _rolepm(ctx, args, _MAFIA_PET_TEMPLATE)
 
     @bot.command(name="petvillager")
-    async def petvillager(ctx, *, name: str):
-        await _rolepm(ctx, name, _TOWN_PET_TEMPLATE)
+    async def petvillager(ctx, *, args: str):
+        await _rolepm(ctx, args, _TOWN_PET_TEMPLATE)
 
     @bot.command(name="petwolf")
-    async def petwolf(ctx, *, name: str):
-        await _rolepm(ctx, name, _MAFIA_PET_TEMPLATE)
+    async def petwolf(ctx, *, args: str):
+        await _rolepm(ctx, args, _MAFIA_PET_TEMPLATE)
 
     @bot.command(name="rmxrole")
     async def rmxrole(ctx):
