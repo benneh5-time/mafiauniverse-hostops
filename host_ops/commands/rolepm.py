@@ -88,11 +88,10 @@ def register(bot, *, mu_user_ids: dict[str, tuple[str, int]], mu_client) -> None
     async def _rolepm(ctx, args: str, template: str) -> None:
         if ctx.channel.id != ROLEPM_CHANNEL_ID:
             return
-        if "|" in args:
-            name, flavor = args.split("|", 1)
-            name, flavor = name.strip(), flavor.strip()
-        else:
-            name, flavor = args.strip(), None
+        parts = [p.strip() for p in args.split("|")]
+        name = parts[0]
+        flavor = parts[1] if len(parts) > 1 and parts[1] else None
+        role_name = parts[2] if len(parts) > 2 and parts[2] else None
         looked_up = _lookup(name)
         if looked_up is None:
             await ctx.reply(f"No MU user found for `{name}`.")
@@ -101,6 +100,8 @@ def register(bot, *, mu_user_ids: dict[str, tuple[str, int]], mu_client) -> None
         role = template.format(player=original_username, img_url=img_url)
         if flavor is not None:
             role = role.replace("$Flavor", flavor)
+        if role_name is not None:
+            role = role.replace("$Role", role_name)
         output = f"{role}\n\n[HTML]{role}[/HTML]"
         try:
             reply = await asyncio.to_thread(mu_client.post_reply, ROLE_DRAFT_THREAD_ID, output)
