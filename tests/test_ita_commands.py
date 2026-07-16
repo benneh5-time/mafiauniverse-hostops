@@ -257,9 +257,9 @@ def test_silent_ita_vest_pops_hit_no_kill_no_reveal(db):
     # posts, but no kill and player stays alive
     mu.kill.assert_not_called()
     announcement, threadmark = mu.post_reply_with_threadmark.call_args.args[1], mu.post_reply_with_threadmark.call_args.args[2]
-    assert "[B]Hit![/B]" in announcement
+    assert "[B]Hit! No one has died.[/B]" in announcement
     assert "[SPOILER]" not in announcement
-    assert threadmark == "A Silent Shot Rings Out!"
+    assert threadmark == "A Silent Shot Rings Out! Hit! No one has died."
     assert not db.is_dead(10, "g", "Alice")
 
 
@@ -343,9 +343,9 @@ def test_ita_vest_pops_hit_no_kill_no_reveal(db):
     assert result.success
     mu.kill.assert_not_called()
     announcement, threadmark = mu.post_reply_with_threadmark.call_args.args[1], mu.post_reply_with_threadmark.call_args.args[2]
-    assert "[B]Hit![/B]" in announcement
+    assert "[B]Hit! No one has died.[/B]" in announcement
     assert "[SPOILER]" not in announcement
-    assert threadmark == "A shot rings out!"
+    assert threadmark == "Hit! No one has died."
     assert not db.is_dead(10, "g", "Alice")
 
 

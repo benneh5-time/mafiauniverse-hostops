@@ -94,32 +94,32 @@ def test_silent_ita_threadmark_hit_without_role():
     assert name == "A Silent Shot Rings Out! Alice was hit"
 
 
-def test_silent_ita_announcement_vest_pop_has_hit_no_reveal():
+def test_silent_ita_announcement_vest_pop_has_hit_no_one_died():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop")
     text = build_silent_ita_announcement(target, hit=True, vest=True)
     assert "[TITLE]A Silent Shot Rings Out![/TITLE]" in text
-    assert "[B]Hit![/B]" in text
+    assert "[B]Hit! No one has died.[/B]" in text
     assert "Redacted Alice" not in text   # no role reveal
-    assert "has died" not in text          # no death block
+    assert "has died. [B]" not in text     # no death block
     assert "[SPOILER]" not in text
 
 
-def test_silent_ita_threadmark_vest_pop_is_minimal():
+def test_silent_ita_threadmark_vest_pop_says_no_one_died():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop")
     name = silent_ita_threadmark_name(target, hit=True, vest=True)
-    assert name == "A Silent Shot Rings Out!"
+    assert name == "A Silent Shot Rings Out! Hit! No one has died."
     assert "Cop" not in name
     assert "Alice" not in name
 
 
-def test_ita_announcement_vest_pop_has_hit_no_reveal():
+def test_ita_announcement_vest_pop_has_hit_no_one_died():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop")
     quote = "[QUOTE=Mashy;123]shot[/QUOTE]"
     text = build_ita_announcement(quote, target, vest=True)
     assert text.startswith(quote)
-    assert "[B]Hit![/B]" in text
+    assert "[B]Hit! No one has died.[/B]" in text
     assert "Redacted Alice" not in text
-    assert "has died" not in text
+    assert "has died. [B]" not in text
 
 
 def test_silent_ita_threadmark_miss_reveals_nothing():
@@ -227,6 +227,6 @@ def test_ita_threadmark_without_role_name():
     assert ita_threadmark_name("Mashy", target) == "In-Thread Attack: Mashy hit gamer"
 
 
-def test_ita_threadmark_vest_pop_is_minimal():
+def test_ita_threadmark_vest_pop_says_no_one_died():
     target = Player("gamer", "gamer_mu", "PM", "Redacted", role_name="Cop")
-    assert ita_threadmark_name("Mashy", target, vest=True) == "A shot rings out!"
+    assert ita_threadmark_name("Mashy", target, vest=True) == "Hit! No one has died."

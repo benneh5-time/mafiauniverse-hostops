@@ -158,7 +158,7 @@ def build_silent_ita_announcement(target: Player, hit: bool, vest: bool = False)
         return f"{header}\n\n[B]Miss![/B]"
     if vest:
         # vest/shield pop: the shot connects but no death and no role reveal
-        return f"{header}\n\n[B]Hit![/B]"
+        return f"{header}\n\n[B]Hit! No one has died.[/B]"
     return f"{header}\n\n[B]Hit![/B]\n\n{build_death_block(target)}"
 
 
@@ -166,7 +166,7 @@ def silent_ita_threadmark_name(target: Player, hit: bool, vest: bool = False) ->
     if not hit:
         return "A Silent Shot Rings Out! Miss"
     if vest:
-        return "A Silent Shot Rings Out!"
+        return "A Silent Shot Rings Out! Hit! No one has died."
     role = f" and was {target.role_name}" if target.role_name else ""
     return f"A Silent Shot Rings Out! {target.player} was hit{role}"
 
@@ -177,7 +177,7 @@ def build_ita_announcement(quote_bbcode: str, target: Player, vest: bool = False
     With ``vest=True`` the shot pops a vest/shield: Hit! is posted but no death reveal.
     """
     if vest:
-        return f"{quote_bbcode.strip()}\n\n[B]Hit![/B]"
+        return f"{quote_bbcode.strip()}\n\n[B]Hit! No one has died.[/B]"
     return f"{quote_bbcode.strip()}\n\n[B]Hit![/B]\n\n{build_death_block(target)}"
 
 
@@ -202,6 +202,6 @@ def extract_quote_author(quote_bbcode: str) -> str | None:
 
 def ita_threadmark_name(shooter: str, target: Player, vest: bool = False) -> str:
     if vest:
-        return "A shot rings out!"
+        return "Hit! No one has died."
     role = f" who was {target.role_name}" if target.role_name else ""
     return f"In-Thread Attack: {shooter} hit {target.player}{role}"
