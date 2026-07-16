@@ -287,23 +287,32 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
 
 
 def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool) -> None:
-    @bot.command(name="kill")
-    async def kill(ctx, player: str, *, reason: str = ""):
-        _result, message = await resolve_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, target_name=player, event_type="kill", reason=reason)
+    async def _single_target_kill(ctx, args: str, event_type: str) -> None:
+        player, reason = parse_pipe_args(args, 2)
+        if not player:
+            await ctx.reply(f"Usage: `!{event_type} <player> | <reason>`")
+            return
+        _result, message = await resolve_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, target_name=player, event_type=event_type, reason=reason)
         await ctx.reply(message)
+
+    @bot.command(name="kill")
+    async def kill(ctx, *, args: str = ""):
+        await _single_target_kill(ctx, args, "kill")
 
     @bot.command(name="dayvig")
-    async def dayvig(ctx, player: str, *, reason: str = ""):
-        _result, message = await resolve_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, target_name=player, event_type="dayvig", reason=reason)
-        await ctx.reply(message)
+    async def dayvig(ctx, *, args: str = ""):
+        await _single_target_kill(ctx, args, "dayvig")
 
     @bot.command(name="desperado")
-    async def desperado(ctx, player: str, *, reason: str = ""):
-        _result, message = await resolve_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, target_name=player, event_type="desperado", reason=reason)
-        await ctx.reply(message)
+    async def desperado(ctx, *, args: str = ""):
+        await _single_target_kill(ctx, args, "desperado")
 
     @bot.command(name="bomb")
-    async def bomb(ctx, bomber: str, bombee: str, *, reason: str = ""):
+    async def bomb(ctx, *, args: str = ""):
+        bomber, bombee, reason = parse_pipe_args(args, 3)
+        if not bomber or not bombee:
+            await ctx.reply("Usage: `!bomb <bomber> | <bombee> | <reason>`")
+            return
         _result, message = await resolve_bomb_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, bomber_name=bomber, bombee_name=bombee, reason=reason)
         await ctx.reply(message)
 
