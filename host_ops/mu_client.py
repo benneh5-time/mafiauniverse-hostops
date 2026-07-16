@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import random
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,6 +43,17 @@ def extract_post_id_from_response(response: Any) -> str | None:
 
 _GETQUOTES_CDATA_RE = re.compile(r"<quotes>\s*<!\[CDATA\[(.*?)\]\]>\s*</quotes>", re.S)
 _GETQUOTES_PLAIN_RE = re.compile(r"<quotes>(.*?)</quotes>", re.S)
+
+
+def _unique_suffix() -> str:
+    """An invisible, unique BBCode tag appended to a post body.
+
+    MU rejects a post whose body is byte-identical to the previous one, so
+    repeated death/ITA announcements would otherwise fail. The tag renders
+    with transparent, size-1 text and is not visible in the posted message.
+    """
+    nonce = f"{time.time_ns():x}{random.randrange(0x10000):04x}"
+    return f"\n\n[SIZE=1][COLOR=transparent]{nonce}[/COLOR][/SIZE]"
 
 
 def parse_post_number(html: str, post_id: int | str) -> str | None:
@@ -166,8 +179,10 @@ class MUClient:
         response.raise_for_status()
         return response
 
-    def post_reply_with_threadmark(self, thread_id: int | str, message: str, threadmark_name: str) -> tuple[PostedReply, Any]:
-        reply = self.post_reply(thread_id, message)
+    def post_reply_with_threadmark(self, thread_id: int | str, message: str, threadmark_name: str,
+                                   unique: bool = True) -> tuple[PostedReply, Any]:
+        body = message + _unique_suffix() if unique else message
+        reply = self.post_reply(thread_id, body)
         if not reply.post_id:
             raise MUClientError(f"Could not extract post id from posted reply redirect: {reply.final_url}")
         postnumber = parse_post_number(reply.text, reply.post_id) or "1"

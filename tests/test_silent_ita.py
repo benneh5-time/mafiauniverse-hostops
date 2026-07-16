@@ -64,7 +64,7 @@ def test_silent_ita_unknown_player(state):
 
 def test_silent_ita_announcement_miss_has_title_and_miss():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice")
-    text = build_silent_ita_announcement(target, hit=False, nonce="abc123")
+    text = build_silent_ita_announcement(target, hit=False)
     assert "[TITLE]A Silent Shot Rings Out![/TITLE]" in text
     assert "[BANNER]" not in text
     assert "[B]Miss![/B]" in text
@@ -73,26 +73,12 @@ def test_silent_ita_announcement_miss_has_title_and_miss():
 
 def test_silent_ita_announcement_hit_has_title_hit_and_reveal():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice")
-    text = build_silent_ita_announcement(target, hit=True, nonce="abc123")
+    text = build_silent_ita_announcement(target, hit=True)
     assert "[TITLE]A Silent Shot Rings Out![/TITLE]" in text
     assert "[BANNER]" not in text
     assert "[B]Hit![/B]" in text
     assert "Alice" in text
     assert "[SPOILER]Redacted Alice[/SPOILER]" in text
-
-
-def test_silent_ita_announcement_embeds_invisible_nonce():
-    target = Player("Alice", "alice_mu", "PM", "Redacted Alice")
-    text = build_silent_ita_announcement(target, hit=False, nonce="deadbeef")
-    assert "[SIZE=1][COLOR=transparent]deadbeef[/COLOR][/SIZE]" in text
-
-
-def test_silent_ita_announcement_nonce_differs_between_calls():
-    target = Player("Alice", "alice_mu", "PM", "Redacted Alice")
-    a = build_silent_ita_announcement(target, hit=False)
-    b = build_silent_ita_announcement(target, hit=False)
-    # two identical misses must not produce byte-identical posts (MU dup-post guard)
-    assert a != b
 
 
 def test_silent_ita_threadmark_hit_names_target_and_role():

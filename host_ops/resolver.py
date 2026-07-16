@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import random
 import re
-import time
 from collections.abc import Callable
 
 from .models import BombResolveResult, GameState, ITASettings, Player, Protection, ResolveResult, normalize_name
@@ -133,23 +132,11 @@ def resolve_silent_ita(*, target_name: str, hitrate: float, state: GameState,
     return ResolveResult(True, target.player, "silent_ita", f"Silent ITA on {target.player} hit ({roll:.1f} <= {hitrate:.1f}).", roll=roll, hit_pct=hitrate, dry_run=dry_run)
 
 
-def _post_nonce() -> str:
-    """A unique token per post; embedded invisibly so repeated posts differ.
-
-    MU rejects a post whose body is byte-identical to the previous one, so two
-    identical silent-ITA misses/hits would otherwise fail.
-    """
-    return f"{time.time_ns():x}{random.randrange(0x10000):04x}"
-
-
-def build_silent_ita_announcement(target: Player, hit: bool, nonce: str | None = None) -> str:
+def build_silent_ita_announcement(target: Player, hit: bool) -> str:
     header = "[TITLE]A Silent Shot Rings Out![/TITLE]"
-    if nonce is None:
-        nonce = _post_nonce()
-    tag = f"\n\n[SIZE=1][COLOR=transparent]{nonce}[/COLOR][/SIZE]"
     if not hit:
-        return f"{header}\n\n[B]Miss![/B]{tag}"
-    return f"{header}\n\n[B]Hit![/B]\n\n{build_death_block(target)}{tag}"
+        return f"{header}\n\n[B]Miss![/B]"
+    return f"{header}\n\n[B]Hit![/B]\n\n{build_death_block(target)}"
 
 
 def silent_ita_threadmark_name(target: Player, hit: bool) -> str:

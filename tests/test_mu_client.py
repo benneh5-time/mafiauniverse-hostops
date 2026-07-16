@@ -161,3 +161,51 @@ def test_post_reply_with_threadmark_parses_postnumber_from_reply():
     assert threadmark_data["do"] == "set_threadmark"
     assert threadmark_data["postid"] == "11042417"
     assert threadmark_data["postnumber"] == "7"
+
+
+def _posted_body(session):
+    """The message body sent by the post_reply POST call (the one carrying 'message')."""
+    for call in session.post.call_args_list:
+        data = call.kwargs.get("data") or {}
+        if "message" in data:
+            return data["message"]
+    raise AssertionError("no post_reply call with a message body was made")
+
+
+def test_post_reply_with_threadmark_appends_invisible_nonce_by_default():
+    session = MagicMock()
+    session.get.return_value = FakeResponse(text='var SECURITYTOKEN = "tok";')
+    session.post.return_value = FakeResponse(
+        url="https://mu/threads/61980?p=11042417#post11042417", text=POSTBIT_SAMPLE)
+    client = MUClient("u", "p", session=session)
+    client.post_reply_with_threadmark(61980, "the death post", "A shot rings out! X is dead")
+    body = _posted_body(session)
+    assert body.startswith("the death post")
+    assert "[SIZE=1][COLOR=transparent]" in body
+    assert "[/COLOR][/SIZE]" in body
+
+
+def test_post_reply_with_threadmark_nonce_differs_between_identical_posts():
+    session = MagicMock()
+    session.get.return_value = FakeResponse(text='var SECURITYTOKEN = "tok";')
+    session.post.return_value = FakeResponse(
+        url="https://mu/threads/61980?p=11042417#post11042417", text=POSTBIT_SAMPLE)
+    client = MUClient("u", "p", session=session)
+
+    client.post_reply_with_threadmark(61980, "same body", "same mark")
+    first_body = _posted_body(session)
+    session.post.reset_mock()
+    client.post_reply_with_threadmark(61980, "same body", "same mark")
+    second_body = _posted_body(session)
+
+    assert first_body != second_body
+
+
+def test_post_reply_with_threadmark_can_disable_nonce():
+    session = MagicMock()
+    session.get.return_value = FakeResponse(text='var SECURITYTOKEN = "tok";')
+    session.post.return_value = FakeResponse(
+        url="https://mu/threads/61980?p=11042417#post11042417", text=POSTBIT_SAMPLE)
+    client = MUClient("u", "p", session=session)
+    client.post_reply_with_threadmark(61980, "exact body", "mark", unique=False)
+    assert _posted_body(session) == "exact body"
