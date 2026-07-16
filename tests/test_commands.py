@@ -37,14 +37,26 @@ def test_live_kill_calls_mu_and_logs(db, basic_state):
     bot.get_channel.return_value = AsyncMock()
     mu = MagicMock()
     mu.kill.return_value = {"response": "Kill was successful"}
-    reply = MagicMock(post_id="555")
+    reply = MagicMock(post_id="555", final_url="https://www.mafiauniverse.com/forums/threads/9?p=555#post555")
     mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
-    result, _message = asyncio.run(resolve_action(bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu,
+    result, message = asyncio.run(resolve_action(bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu,
                                             live_mode=True, host_channel_id=10, target_name="Alice", event_type="kill"))
     assert result.success
     mu.kill.assert_called_once()
     mu.post_reply_with_threadmark.assert_called_once()
     assert db.is_dead(10, "g", "Alice")
+    # the reply links to the created death post
+    assert "https://www.mafiauniverse.com/forums/threads/9?p=555#post555" in message
+
+
+def test_dry_run_kill_message_has_no_post_link(db, basic_state):
+    db.upsert_game(GameConfig("g", 123, "sheet", 10, log_channel_id=99, active=True))
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    _result, message = asyncio.run(resolve_action(bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu,
+                                            live_mode=False, host_channel_id=10, target_name="Alice", event_type="kill"))
+    assert "http" not in message
 
 
 def test_bomb_dry_run_marks_both_dead_and_skips_mu(db, basic_state):
@@ -71,15 +83,16 @@ def test_bomb_live_calls_mu_twice_and_posts_once(db, basic_state):
     bot.get_channel.return_value = AsyncMock()
     mu = MagicMock()
     mu.kill.return_value = {"response": "Kill was successful"}
-    reply = MagicMock(post_id="555")
+    reply = MagicMock(post_id="555", final_url="https://www.mafiauniverse.com/forums/threads/9?p=555#post555")
     mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
-    result, _message = asyncio.run(resolve_bomb_action(bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu,
+    result, message = asyncio.run(resolve_bomb_action(bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu,
                                                   live_mode=True, host_channel_id=10, bomber_name="Alice", bombee_name="Bob"))
     assert result is not None
     assert mu.kill.call_count == 2
     mu.post_reply_with_threadmark.assert_called_once()
     assert db.is_dead(10, "g", "Alice")
     assert db.is_dead(10, "g", "Bob")
+    assert "https://www.mafiauniverse.com/forums/threads/9?p=555#post555" in message
 
 
 def test_bomb_live_aborts_if_second_kill_unconfirmed(db, basic_state):

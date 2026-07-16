@@ -78,6 +78,7 @@ async def resolve_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_cl
     )
     outcome = _outcome(result)
     mu_post_id = None
+    post_link = None
     if result.success and live_mode:
         target = resolve_player(result.target_name, state.players)
         if cfg.game_id:
@@ -92,6 +93,7 @@ async def resolve_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_cl
         announcement = build_death_announcement(target, event_type, reason)
         reply, _threadmark_response = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark_name(target, event_type))
         mu_post_id = reply.post_id
+        post_link = _post_link(reply, cfg.thread_id)
         result.mu_response = kill_response
         result.announcement_post_id = reply.post_id
         result.threadmark_ok = True
@@ -104,7 +106,8 @@ async def resolve_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_cl
                  mu_post_id=mu_post_id, notes=reason or None)
     prefix = "[DRY RUN] " if not live_mode else ""
     await _send_log(bot, cfg, f"{prefix}**{event_type.upper()}** target={result.target_name} outcome={outcome}" + (f" shooter={shooter}" if shooter else ""))
-    return result, result.message
+    message = result.message + (f"\n{post_link}" if post_link else "")
+    return result, message
 
 
 async def resolve_bomb_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
@@ -128,6 +131,7 @@ async def resolve_bomb_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, 
         return None, str(exc)
 
     mu_post_id = None
+    post_link = None
     if live_mode:
         bomber_kill = await asyncio.to_thread(mu_client.kill, cfg.thread_id, bomb.bomber.mu_username)
         bomber_ok = isinstance(bomber_kill, dict) and "successful" in bomber_kill.get("response", "").lower()
@@ -140,6 +144,7 @@ async def resolve_bomb_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, 
         announcement = bomb.build_announcement(reason)
         reply, _threadmark_response = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, bomb.threadmark_name())
         mu_post_id = reply.post_id
+        post_link = _post_link(reply, cfg.thread_id)
         bomb.mu_response_bomber = bomber_kill
         bomb.mu_response_bombee = bombee_kill
         bomb.announcement_post_id = reply.post_id
@@ -153,6 +158,8 @@ async def resolve_bomb_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, 
 
     prefix = "[DRY RUN] " if not live_mode else ""
     message = f"{prefix}Bomb resolved: {bomb.bomber.player} and {bomb.bombee.player} are dead."
+    if post_link:
+        message += f"\n{post_link}"
     await _send_log(bot, cfg, f"{prefix}**BOMB** bomber={bomb.bomber.player} bombee={bomb.bombee.player} outcome=killed")
     return bomb, message
 
