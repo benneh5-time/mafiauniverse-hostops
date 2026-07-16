@@ -46,6 +46,26 @@ def choose_ita_settings(target: Player, phase: str, settings: list[ITASettings])
     return global_rows[-1] if global_rows else ITASettings(default_hit_pct=0.0)
 
 
+def ita_protection_warning(target: Player, state: GameState, phase: str = "any") -> str | None:
+    """Warn if the target's ITA settings show an active shield or BPV.
+
+    Reads the shield_status / bpv_status already loaded from the sheet (kept fresh
+    with !pull_ita). Any non-zero value is treated as possibly-protected. Returns a
+    human-readable warning, or None if the target looks safe to shoot.
+    """
+    chosen = choose_ita_settings(target, phase, state.ita_settings)
+    protections = []
+    if chosen.shield_status:
+        protections.append(f"ITA shield (shield_status={chosen.shield_status})")
+    if chosen.bpv_status:
+        protections.append(f"BPV (bpv_status={chosen.bpv_status})")
+    if not protections:
+        return None
+    return (f"⚠️ {target.player} may be protected: {', '.join(protections)}. "
+            f"Nothing was posted. Re-run with `| confirm` to override "
+            f"(check MU / `!pull_ita` first if unsure).")
+
+
 def ita_hit_pct(target: Player, phase: str, settings: list[ITASettings]) -> tuple[float, bool]:
     chosen = choose_ita_settings(target, phase, settings)
     if chosen.immune:
@@ -132,22 +152,32 @@ def resolve_silent_ita(*, target_name: str, hitrate: float, state: GameState,
     return ResolveResult(True, target.player, "silent_ita", f"Silent ITA on {target.player} hit ({roll:.1f} <= {hitrate:.1f}).", roll=roll, hit_pct=hitrate, dry_run=dry_run)
 
 
-def build_silent_ita_announcement(target: Player, hit: bool) -> str:
+def build_silent_ita_announcement(target: Player, hit: bool, vest: bool = False) -> str:
     header = "[TITLE]A Silent Shot Rings Out![/TITLE]"
     if not hit:
         return f"{header}\n\n[B]Miss![/B]"
+    if vest:
+        # vest/shield pop: the shot connects but no death and no role reveal
+        return f"{header}\n\n[B]Hit![/B]"
     return f"{header}\n\n[B]Hit![/B]\n\n{build_death_block(target)}"
 
 
-def silent_ita_threadmark_name(target: Player, hit: bool) -> str:
+def silent_ita_threadmark_name(target: Player, hit: bool, vest: bool = False) -> str:
     if not hit:
         return "A Silent Shot Rings Out! Miss"
+    if vest:
+        return "A Silent Shot Rings Out!"
     role = f" and was {target.role_name}" if target.role_name else ""
     return f"A Silent Shot Rings Out! {target.player} was hit{role}"
 
 
-def build_ita_announcement(quote_bbcode: str, target: Player) -> str:
-    """Quote (already wrapped by MU) + Hit! + standard death reveal."""
+def build_ita_announcement(quote_bbcode: str, target: Player, vest: bool = False) -> str:
+    """Quote (already wrapped by MU) + Hit! + standard death reveal.
+
+    With ``vest=True`` the shot pops a vest/shield: Hit! is posted but no death reveal.
+    """
+    if vest:
+        return f"{quote_bbcode.strip()}\n\n[B]Hit![/B]"
     return f"{quote_bbcode.strip()}\n\n[B]Hit![/B]\n\n{build_death_block(target)}"
 
 
@@ -170,6 +200,8 @@ def extract_quote_author(quote_bbcode: str) -> str | None:
     return match.group(1).strip() or None
 
 
-def ita_threadmark_name(shooter: str, target: Player) -> str:
+def ita_threadmark_name(shooter: str, target: Player, vest: bool = False) -> str:
+    if vest:
+        return "A shot rings out!"
     role = f" who was {target.role_name}" if target.role_name else ""
     return f"In-Thread Attack: {shooter} hit {target.player}{role}"

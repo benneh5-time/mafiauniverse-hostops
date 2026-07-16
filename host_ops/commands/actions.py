@@ -13,6 +13,7 @@ from ..resolver import (
     build_silent_ita_announcement,
     extract_post_id_from_link,
     extract_quote_author,
+    ita_protection_warning,
     ita_threadmark_name,
     resolve_bomb,
     resolve_death,
@@ -24,6 +25,12 @@ from ..resolver import (
 from ..sheets import SheetReader
 
 DEFAULT_SILENT_ITA_HITRATE = 18.0
+
+
+def _normalize_mode(mode: str | None) -> str:
+    """Return one of '', 'confirm', 'vest' from the final pipe field."""
+    m = (mode or "").strip().lower()
+    return m if m in ("confirm", "vest") else ""
 
 
 def parse_pipe_args(args: str, count: int) -> list[str]:
@@ -192,12 +199,13 @@ def _post_link(reply, thread_id) -> str | None:
 
 async def silent_ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
                             host_channel_id: int, target_name: str, source: str | None, hitrate: float | None,
-                            rng=random.random):
+                            mode: str | None = None, rng=random.random):
     cfg = db.get_active_game(host_channel_id)
     if cfg is None:
         return None, "No active game. Use `!use_game <name>` first."
     if hitrate is None:
         hitrate = DEFAULT_SILENT_ITA_HITRATE
+    mode = _normalize_mode(mode)
     state = sheet_reader.load_game_state(cfg.sheet_id)
     dead = db.dead_players(cfg.host_channel_id, cfg.name)
     for player in state.players:
@@ -211,14 +219,24 @@ async def silent_ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu
         return result, result.message
 
     hit = result.success
+    vest = hit and mode == "vest"
     target = resolve_player(result.target_name, state.players)
-    announcement = build_silent_ita_announcement(target, hit)
-    threadmark = silent_ita_threadmark_name(target, hit)
+
+    # A hit that would post a death (not a vest pop, not already confirmed) is guarded
+    # against shielded/BPV targets, since a real flip cannot be undone.
+    if hit and not vest and mode != "confirm":
+        warning = ita_protection_warning(target, state)
+        if warning:
+            return None, warning
+
+    announcement = build_silent_ita_announcement(target, hit, vest=vest)
+    threadmark = silent_ita_threadmark_name(target, hit, vest=vest)
+    kills = hit and not vest  # vest pop connects but does not kill
     mu_post_id = None
     post_link = None
 
     if live_mode:
-        if hit:
+        if kills:
             abort = await _modbot_precheck(mu_client, cfg, target)
             if abort:
                 return result, abort
@@ -232,20 +250,22 @@ async def silent_ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu
         result.announcement_post_id = reply.post_id
         result.threadmark_ok = True
 
-    if hit:
+    if kills:
         db.mark_dead(cfg.host_channel_id, cfg.name, result.target_name, "silent_ita")
 
-    outcome = "killed" if hit else "missed"
+    outcome = "vest_pop" if vest else ("killed" if hit else "missed")
     db.log_event(cfg.host_channel_id, cfg.name, "silent_ita", result.target_name, outcome, shooter=source,
                  roll=result.roll, hit_pct=result.hit_pct, dry_run=not live_mode, mu_post_id=mu_post_id)
     prefix = "[DRY RUN] " if not live_mode else ""
     await _send_log(bot, cfg, f"{prefix}**SILENT_ITA** target={result.target_name} outcome={outcome}" + (f" source={source}" if source else ""))
-    message = result.message + (f"\n{post_link}" if post_link else "")
+    reply_text = f"{prefix}Vest popped on {result.target_name} (no kill)." if vest else result.message
+    message = reply_text + (f"\n{post_link}" if post_link else "")
     return result, message
 
 
 async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
-                     host_channel_id: int, target_name: str, source: str | None, post_link: str):
+                     host_channel_id: int, target_name: str, source: str | None, post_link: str,
+                     mode: str | None = None):
     cfg = db.get_active_game(host_channel_id)
     if cfg is None:
         return None, "No active game. Use `!use_game <name>` first."
@@ -254,6 +274,8 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
     except ResolutionError as exc:
         return None, str(exc)
 
+    mode = _normalize_mode(mode)
+    vest = mode == "vest"
     state = sheet_reader.load_game_state(cfg.sheet_id)
     dead = db.dead_players(cfg.host_channel_id, cfg.name)
     for player in state.players:
@@ -266,29 +288,39 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
     if db.is_dead(cfg.host_channel_id, cfg.name, target.player) or not target.alive:
         return None, f"{target.player} is already dead."
 
+    # A real flip cannot be undone, so guard a killing ITA against shielded/BPV targets.
+    if not vest and mode != "confirm":
+        warning = ita_protection_warning(target, state)
+        if warning:
+            return None, warning
+
     mu_post_id = None
     post_link = None
     if live_mode:
         quote_bbcode = await asyncio.to_thread(mu_client.fetch_quote_bbcode, cfg.thread_id, post_id)
-        announcement = build_ita_announcement(quote_bbcode, target)
+        announcement = build_ita_announcement(quote_bbcode, target, vest=vest)
         shooter = extract_quote_author(quote_bbcode) or source or "Unknown"
-        abort = await _modbot_precheck(mu_client, cfg, target)
-        if abort:
-            return None, abort
-        kill_response = await asyncio.to_thread(mu_client.kill, cfg.thread_id, target.mu_username)
-        if not _kill_confirmed(kill_response):
-            return None, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
+        if not vest:
+            abort = await _modbot_precheck(mu_client, cfg, target)
+            if abort:
+                return None, abort
+            kill_response = await asyncio.to_thread(mu_client.kill, cfg.thread_id, target.mu_username)
+            if not _kill_confirmed(kill_response):
+                return None, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
         reply, _tm = await asyncio.to_thread(
-            mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, ita_threadmark_name(shooter, target))
+            mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, ita_threadmark_name(shooter, target, vest=vest))
         mu_post_id = reply.post_id
         post_link = _post_link(reply, cfg.thread_id)
 
-    db.mark_dead(cfg.host_channel_id, cfg.name, target.player, "ita")
-    db.log_event(cfg.host_channel_id, cfg.name, "ita", target.player, "killed", shooter=source,
+    if not vest:
+        db.mark_dead(cfg.host_channel_id, cfg.name, target.player, "ita")
+    outcome = "vest_pop" if vest else "killed"
+    db.log_event(cfg.host_channel_id, cfg.name, "ita", target.player, outcome, shooter=source,
                  dry_run=not live_mode, mu_post_id=mu_post_id, notes=f"quote post {post_id}")
     prefix = "[DRY RUN] " if not live_mode else ""
-    await _send_log(bot, cfg, f"{prefix}**ITA** target={target.player} outcome=killed" + (f" source={source}" if source else ""))
-    message = f"{prefix}ITA hit: {target.player} is dead." + (f"\n{post_link}" if post_link else "")
+    await _send_log(bot, cfg, f"{prefix}**ITA** target={target.player} outcome={outcome}" + (f" source={source}" if source else ""))
+    reply_text = f"{prefix}Vest popped on {target.player} (no kill)." if vest else f"{prefix}ITA hit: {target.player} is dead."
+    message = reply_text + (f"\n{post_link}" if post_link else "")
     result = ResolveResult(True, target.player, "ita", message, dry_run=not live_mode, announcement_post_id=mu_post_id)
     return result, message
 
@@ -358,9 +390,9 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
 
     @bot.command(name="silent_ita")
     async def silent_ita(ctx, *, args: str = ""):
-        target, source, hitrate_raw = parse_pipe_args(args, 3)
+        target, source, hitrate_raw, mode = parse_pipe_args(args, 4)
         if not target:
-            await ctx.reply("Usage: `!silent_ita <target> | <source> | <hitrate>` (hitrate default 18)")
+            await ctx.reply("Usage: `!silent_ita <target> | <source> | <hitrate> | [confirm|vest]` (hitrate default 18)")
             return
         try:
             hitrate = float(hitrate_raw.rstrip("%").strip()) if hitrate_raw else None
@@ -369,18 +401,18 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
             return
         _result, message = await silent_ita_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
                                                     live_mode=live_mode, host_channel_id=ctx.channel.id,
-                                                    target_name=target, source=source or None, hitrate=hitrate)
+                                                    target_name=target, source=source or None, hitrate=hitrate, mode=mode)
         await ctx.reply(message)
 
     @bot.command(name="ita")
     async def ita(ctx, *, args: str = ""):
-        target, source, post_link = parse_pipe_args(args, 3)
+        target, source, post_link, mode = parse_pipe_args(args, 4)
         if not target or not post_link:
-            await ctx.reply("Usage: `!ita <target> | <source> | <post link>`")
+            await ctx.reply("Usage: `!ita <target> | <source> | <post link> | [confirm|vest]`")
             return
         _result, message = await ita_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
                                             live_mode=live_mode, host_channel_id=ctx.channel.id,
-                                            target_name=target, source=source or None, post_link=post_link)
+                                            target_name=target, source=source or None, post_link=post_link, mode=mode)
         await ctx.reply(message)
 
     @bot.command(name="resolve_ita")

@@ -9,6 +9,7 @@ from host_ops.resolver import (
     build_silent_ita_announcement,
     extract_post_id_from_link,
     extract_quote_author,
+    ita_protection_warning,
     ita_threadmark_name,
     resolve_silent_ita,
     silent_ita_threadmark_name,
@@ -93,6 +94,34 @@ def test_silent_ita_threadmark_hit_without_role():
     assert name == "A Silent Shot Rings Out! Alice was hit"
 
 
+def test_silent_ita_announcement_vest_pop_has_hit_no_reveal():
+    target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop")
+    text = build_silent_ita_announcement(target, hit=True, vest=True)
+    assert "[TITLE]A Silent Shot Rings Out![/TITLE]" in text
+    assert "[B]Hit![/B]" in text
+    assert "Redacted Alice" not in text   # no role reveal
+    assert "has died" not in text          # no death block
+    assert "[SPOILER]" not in text
+
+
+def test_silent_ita_threadmark_vest_pop_is_minimal():
+    target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop")
+    name = silent_ita_threadmark_name(target, hit=True, vest=True)
+    assert name == "A Silent Shot Rings Out!"
+    assert "Cop" not in name
+    assert "Alice" not in name
+
+
+def test_ita_announcement_vest_pop_has_hit_no_reveal():
+    target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop")
+    quote = "[QUOTE=Mashy;123]shot[/QUOTE]"
+    text = build_ita_announcement(quote, target, vest=True)
+    assert text.startswith(quote)
+    assert "[B]Hit![/B]" in text
+    assert "Redacted Alice" not in text
+    assert "has died" not in text
+
+
 def test_silent_ita_threadmark_miss_reveals_nothing():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice")
     name = silent_ita_threadmark_name(target, hit=False)
@@ -124,6 +153,55 @@ def test_extract_post_id_unparseable_raises():
         extract_post_id_from_link("https://www.mafiauniverse.com/forums/threads/9/")
 
 
+# ---- ITA protection warning (shield / BPV) --------------------------------
+
+def _state_with_ita(player, **ita_kwargs):
+    return GameState(
+        players=[Player(player, f"{player.lower()}_mu", "PM", "Redacted")],
+        protections=[],
+        ita_settings=[ITASettings(phase="any", player=player, **ita_kwargs)],
+    )
+
+
+def test_no_warning_when_unprotected():
+    target = Player("Alice", "alice_mu", "PM", "Redacted")
+    state = _state_with_ita("Alice", shield_status=0, bpv_status=0)
+    assert ita_protection_warning(target, state) is None
+
+
+def test_warns_on_ita_shield():
+    target = Player("Alice", "alice_mu", "PM", "Redacted")
+    state = _state_with_ita("Alice", shield_status=1, bpv_status=0)
+    warning = ita_protection_warning(target, state)
+    assert warning is not None
+    assert "shield" in warning.lower()
+    assert "Alice" in warning
+
+
+def test_warns_on_bpv():
+    target = Player("Alice", "alice_mu", "PM", "Redacted")
+    state = _state_with_ita("Alice", shield_status=0, bpv_status=2)
+    warning = ita_protection_warning(target, state)
+    assert warning is not None
+    assert "bpv" in warning.lower() or "bulletproof" in warning.lower()
+
+
+def test_warns_on_both_shield_and_bpv():
+    target = Player("Alice", "alice_mu", "PM", "Redacted")
+    state = _state_with_ita("Alice", shield_status=1, bpv_status=1)
+    warning = ita_protection_warning(target, state)
+    assert warning is not None
+    assert "shield" in warning.lower()
+    assert "bpv" in warning.lower() or "bulletproof" in warning.lower()
+
+
+def test_no_warning_when_no_ita_row_for_target():
+    # target has no matching sheet row -> nothing to warn about
+    target = Player("Zed", "zed_mu", "PM", "Redacted")
+    state = _state_with_ita("Alice", shield_status=1, bpv_status=1)
+    assert ita_protection_warning(target, state) is None
+
+
 def test_extract_quote_author_from_username_label():
     quote = "[QUOTE=Mashy;11065419]I shoot gamer[/QUOTE]"
     assert extract_quote_author(quote) == "Mashy"
@@ -147,3 +225,8 @@ def test_ita_threadmark_uses_shooter_target_and_role():
 def test_ita_threadmark_without_role_name():
     target = Player("gamer", "gamer_mu", "PM", "Redacted", role_name="")
     assert ita_threadmark_name("Mashy", target) == "In-Thread Attack: Mashy hit gamer"
+
+
+def test_ita_threadmark_vest_pop_is_minimal():
+    target = Player("gamer", "gamer_mu", "PM", "Redacted", role_name="Cop")
+    assert ita_threadmark_name("Mashy", target, vest=True) == "A shot rings out!"

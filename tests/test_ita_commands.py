@@ -201,6 +201,154 @@ def test_ita_bad_link_returns_error_no_mu(db, basic_state):
     mu.fetch_quote_bbcode.assert_not_called()
 
 
+# ---- shield / BPV guard --------------------------------------------------
+
+def _shielded_state():
+    from host_ops.models import GameState, ITASettings, Player
+    return GameState(
+        players=[Player("Alice", "alice_mu", "PM", "Redacted Alice", True, "town")],
+        protections=[],
+        ita_settings=[ITASettings(phase="any", player="Alice", default_hit_pct=100.0, shield_status=1)],
+    )
+
+
+def test_silent_ita_warns_and_skips_when_target_shielded(db):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    result, message = asyncio.run(silent_ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None, hitrate=100.0, rng=lambda: 0.0))
+    assert result is None
+    assert "shield" in message.lower()
+    mu.kill.assert_not_called()
+    mu.post_reply_with_threadmark.assert_not_called()
+    assert not db.is_dead(10, "g", "Alice")
+
+
+def test_silent_ita_confirm_overrides_shield(db):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    mu.kill.return_value = {"response": "Kill was successful"}
+    reply = MagicMock(post_id="555", final_url="https://mu/threads/1?p=555#post555")
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    result, _msg = asyncio.run(silent_ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None, hitrate=100.0, mode="confirm", rng=lambda: 0.0))
+    assert result.success
+    mu.kill.assert_called_once()
+    assert db.is_dead(10, "g", "Alice")
+
+
+def test_silent_ita_vest_pops_hit_no_kill_no_reveal(db):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    reply = MagicMock(post_id="555", final_url="https://mu/threads/1?p=555#post555")
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    result, _msg = asyncio.run(silent_ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None, hitrate=100.0, mode="vest", rng=lambda: 0.0))
+    assert result.success
+    # posts, but no kill and player stays alive
+    mu.kill.assert_not_called()
+    announcement, threadmark = mu.post_reply_with_threadmark.call_args.args[1], mu.post_reply_with_threadmark.call_args.args[2]
+    assert "[B]Hit![/B]" in announcement
+    assert "[SPOILER]" not in announcement
+    assert threadmark == "A Silent Shot Rings Out!"
+    assert not db.is_dead(10, "g", "Alice")
+
+
+def test_silent_ita_vest_miss_still_posts_miss(db):
+    # vest passed but the roll misses -> normal Miss, no vest pop
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    reply = MagicMock(post_id="555", final_url=None)
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    result, _msg = asyncio.run(silent_ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None, hitrate=1.0, mode="vest", rng=lambda: 0.99))
+    assert result.miss
+    announcement = mu.post_reply_with_threadmark.call_args.args[1]
+    assert "[B]Miss![/B]" in announcement
+
+
+def test_silent_ita_miss_not_blocked_by_shield(db):
+    # a miss posts "Miss!" but doesn't kill, so a shield is irrelevant and shouldn't block
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    reply = MagicMock(post_id="555", final_url=None)
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    result, _msg = asyncio.run(silent_ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None, hitrate=1.0, rng=lambda: 0.99))
+    assert result.miss
+    mu.post_reply_with_threadmark.assert_called_once()
+
+
+def test_ita_warns_and_skips_when_target_shielded(db):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    result, message = asyncio.run(ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None,
+        post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
+    assert result is None
+    assert "shield" in message.lower()
+    mu.kill.assert_not_called()
+    mu.fetch_quote_bbcode.assert_not_called()
+    assert not db.is_dead(10, "g", "Alice")
+
+
+def test_ita_confirm_overrides_shield(db):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    mu.fetch_quote_bbcode.return_value = "[QUOTE=Mashy;11042484]shot[/QUOTE]"
+    mu.kill.return_value = {"response": "Kill was successful"}
+    reply = MagicMock(post_id="555", final_url="https://mu/threads/1?p=555#post555")
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    result, _msg = asyncio.run(ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None, mode="confirm",
+        post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
+    assert result.success
+    mu.kill.assert_called_once()
+    assert db.is_dead(10, "g", "Alice")
+
+
+def test_ita_vest_pops_hit_no_kill_no_reveal(db):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    mu.fetch_quote_bbcode.return_value = "[QUOTE=Mashy;11042484]shot[/QUOTE]"
+    reply = MagicMock(post_id="555", final_url="https://mu/threads/1?p=555#post555")
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    result, _msg = asyncio.run(ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None, mode="vest",
+        post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
+    assert result.success
+    mu.kill.assert_not_called()
+    announcement, threadmark = mu.post_reply_with_threadmark.call_args.args[1], mu.post_reply_with_threadmark.call_args.args[2]
+    assert "[B]Hit![/B]" in announcement
+    assert "[SPOILER]" not in announcement
+    assert threadmark == "A shot rings out!"
+    assert not db.is_dead(10, "g", "Alice")
+
+
 # ---- !ita (roll-only, report to Discord/log, nothing posted) --------------
 
 def test_ita_roll_hit_reports_but_touches_nothing(db, basic_state):
