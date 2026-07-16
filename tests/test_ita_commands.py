@@ -54,9 +54,9 @@ def test_silent_ita_live_hit_kills_and_posts(db, basic_state):
     bot.get_channel.return_value = AsyncMock()
     mu = MagicMock()
     mu.kill.return_value = {"response": "Kill was successful"}
-    reply = MagicMock(post_id="555")
+    reply = MagicMock(post_id="555", final_url="https://www.mafiauniverse.com/forums/threads/123?p=555#post555")
     mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
-    result, _msg = asyncio.run(silent_ita_action(
+    result, message = asyncio.run(silent_ita_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
         host_channel_id=10, target_name="Alice", source=None, hitrate=100.0, rng=lambda: 0.0))
     assert result.success
@@ -68,6 +68,7 @@ def test_silent_ita_live_hit_kills_and_posts(db, basic_state):
     assert "[B]Hit![/B]" in announcement
     assert threadmark == "A Silent Shot Rings Out! Alice is dead"
     assert db.is_dead(10, "g", "Alice")
+    assert "https://www.mafiauniverse.com/forums/threads/123?p=555#post555" in message
 
 
 def test_silent_ita_live_miss_posts_threadmark_no_kill(db, basic_state):
@@ -121,9 +122,9 @@ def test_ita_live_quotes_kills_and_posts(db, basic_state):
     mu = MagicMock()
     mu.fetch_quote_bbcode.return_value = "[QUOTE=Label;11042484]original[/QUOTE]"
     mu.kill.return_value = {"response": "Kill was successful"}
-    reply = MagicMock(post_id="555")
+    reply = MagicMock(post_id="555", final_url="https://www.mafiauniverse.com/forums/threads/9?p=555#post555")
     mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
-    result, _msg = asyncio.run(ita_action(
+    result, message = asyncio.run(ita_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
         host_channel_id=10, target_name="Alice", source="Bob",
         post_link="https://www.mafiauniverse.com/forums/threads/9/page5#post11042484"))
@@ -135,6 +136,24 @@ def test_ita_live_quotes_kills_and_posts(db, basic_state):
     assert announcement.startswith("[QUOTE=Label;11042484]original[/QUOTE]")
     assert "[B]Hit![/B]" in announcement
     assert db.is_dead(10, "g", "Alice")
+    # reply links to the created post
+    assert "https://www.mafiauniverse.com/forums/threads/9?p=555#post555" in message
+
+
+def test_ita_link_falls_back_to_constructed_url_when_no_final_url(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    mu.fetch_quote_bbcode.return_value = "[QUOTE=Label;11042484]original[/QUOTE]"
+    mu.kill.return_value = {"response": "Kill was successful"}
+    reply = MagicMock(post_id="777", final_url=None)
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    _result, message = asyncio.run(ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None,
+        post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
+    assert "?p=777#post777" in message
 
 
 def test_ita_dry_run_marks_dead_without_mu(db, basic_state):

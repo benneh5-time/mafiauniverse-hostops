@@ -169,6 +169,18 @@ def _kill_confirmed(kill_response) -> bool:
     return isinstance(kill_response, dict) and "successful" in kill_response.get("response", "").lower()
 
 
+def _post_link(reply, thread_id) -> str | None:
+    """Direct MU link to a posted reply, matching the role-post links."""
+    if reply is None:
+        return None
+    if getattr(reply, "final_url", None):
+        return reply.final_url
+    post_id = getattr(reply, "post_id", None)
+    if not post_id:
+        return None
+    return f"https://www.mafiauniverse.com/forums/threads/{thread_id}?p={post_id}#post{post_id}"
+
+
 async def silent_ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
                             host_channel_id: int, target_name: str, source: str | None, hitrate: float | None,
                             rng=random.random):
@@ -194,6 +206,7 @@ async def silent_ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu
     announcement = build_silent_ita_announcement(target, hit)
     threadmark = silent_ita_threadmark_name(target, hit)
     mu_post_id = None
+    post_link = None
 
     if live_mode:
         if hit:
@@ -206,6 +219,7 @@ async def silent_ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu
             result.mu_response = kill_response
         reply, _tm = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark)
         mu_post_id = reply.post_id
+        post_link = _post_link(reply, cfg.thread_id)
         result.announcement_post_id = reply.post_id
         result.threadmark_ok = True
 
@@ -217,7 +231,8 @@ async def silent_ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu
                  roll=result.roll, hit_pct=result.hit_pct, dry_run=not live_mode, mu_post_id=mu_post_id)
     prefix = "[DRY RUN] " if not live_mode else ""
     await _send_log(bot, cfg, f"{prefix}**SILENT_ITA** target={result.target_name} outcome={outcome}" + (f" source={source}" if source else ""))
-    return result, result.message
+    message = result.message + (f"\n{post_link}" if post_link else "")
+    return result, message
 
 
 async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
@@ -243,6 +258,7 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
         return None, f"{target.player} is already dead."
 
     mu_post_id = None
+    post_link = None
     if live_mode:
         quote_bbcode = await asyncio.to_thread(mu_client.fetch_quote_bbcode, cfg.thread_id, post_id)
         announcement = build_ita_announcement(quote_bbcode, target)
@@ -255,15 +271,16 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
         reply, _tm = await asyncio.to_thread(
             mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark_name(target, "ita"))
         mu_post_id = reply.post_id
+        post_link = _post_link(reply, cfg.thread_id)
 
     db.mark_dead(cfg.host_channel_id, cfg.name, target.player, "ita")
     db.log_event(cfg.host_channel_id, cfg.name, "ita", target.player, "killed", shooter=source,
                  dry_run=not live_mode, mu_post_id=mu_post_id, notes=f"quote post {post_id}")
     prefix = "[DRY RUN] " if not live_mode else ""
     await _send_log(bot, cfg, f"{prefix}**ITA** target={target.player} outcome=killed" + (f" source={source}" if source else ""))
-    result = ResolveResult(True, target.player, "ita", f"{prefix}ITA hit: {target.player} is dead.",
-                           dry_run=not live_mode, announcement_post_id=mu_post_id)
-    return result, result.message
+    message = f"{prefix}ITA hit: {target.player} is dead." + (f"\n{post_link}" if post_link else "")
+    result = ResolveResult(True, target.player, "ita", message, dry_run=not live_mode, announcement_post_id=mu_post_id)
+    return result, message
 
 
 def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool) -> None:
