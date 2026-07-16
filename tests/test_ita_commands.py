@@ -3,8 +3,21 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from host_ops.commands.actions import ita_action, parse_pipe_args, silent_ita_action
+import discord
+from discord.ext import commands
+
+from host_ops.commands import actions
+from host_ops.commands.actions import ita_action, ita_roll_action, parse_pipe_args, silent_ita_action
 from host_ops.models import GameConfig
+
+
+def test_ita_and_resolve_ita_commands_registered():
+    intents = discord.Intents.default()
+    bot = commands.Bot(command_prefix="!", intents=intents)
+    actions.register(bot, db=MagicMock(), sheet_reader=MagicMock(), mu_client=MagicMock(), live_mode=False)
+    names = {c.name for c in bot.commands}
+    assert "ita" in names          # unchanged: quote-a-post, posts to thread
+    assert "resolve_ita" in names  # new: roll-only accuracy command
 
 
 class FakeSheetReader:
@@ -186,3 +199,78 @@ def test_ita_bad_link_returns_error_no_mu(db, basic_state):
     assert "post id" in message.lower()
     mu.kill.assert_not_called()
     mu.fetch_quote_bbcode.assert_not_called()
+
+
+# ---- !ita (roll-only, report to Discord/log, nothing posted) --------------
+
+def test_ita_roll_hit_reports_but_touches_nothing(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    log_channel = AsyncMock()
+    bot.get_channel.return_value = log_channel
+    mu = MagicMock()
+    result, message = asyncio.run(ita_roll_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", shooter="Bob", accuracy=90.0, rng=lambda: 0.10))
+    assert result.success
+    # nothing posted, no kill, no death recorded
+    mu.kill.assert_not_called()
+    mu.post_reply_with_threadmark.assert_not_called()
+    mu.fetch_quote_bbcode.assert_not_called()
+    assert not db.is_dead(10, "g", "Alice")
+    # reports to discord and the log channel
+    assert "hit" in message.lower()
+    log_channel.send.assert_called_once()
+    # and logs an event
+    events = db.get_events(10, "g", "Alice")
+    assert events and events[-1]["event_type"] == "ita_roll"
+
+
+def test_ita_roll_miss(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    result, message = asyncio.run(ita_roll_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", shooter="Bob", accuracy=10.0, rng=lambda: 0.90))
+    assert result.miss
+    assert "miss" in message.lower()
+    assert not db.is_dead(10, "g", "Alice")
+
+
+def test_ita_roll_same_in_live_and_dry_run(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    live, _ = asyncio.run(ita_roll_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", shooter="Bob", accuracy=50.0, rng=lambda: 0.10))
+    dry, _ = asyncio.run(ita_roll_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=False,
+        host_channel_id=10, target_name="Alice", shooter="Bob", accuracy=50.0, rng=lambda: 0.10))
+    assert live.success and dry.success
+    mu.kill.assert_not_called()
+
+
+def test_ita_roll_unknown_player(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    result, message = asyncio.run(ita_roll_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Nobody", shooter="Bob", accuracy=50.0))
+    assert not result.success
+    assert "unknown player" in message.lower()
+
+
+def test_ita_roll_no_active_game(db, basic_state):
+    bot = MagicMock()
+    mu = MagicMock()
+    result, message = asyncio.run(ita_roll_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", shooter="Bob", accuracy=50.0))
+    assert result is None
+    assert "No active game" in message

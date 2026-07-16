@@ -293,6 +293,39 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
     return result, message
 
 
+async def ita_roll_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
+                          host_channel_id: int, target_name: str, shooter: str | None, accuracy: float,
+                          rng=random.random):
+    """Roll an ITA against a given accuracy and report the result only.
+
+    Never posts to the MU thread, never kills, never marks the player dead — it is a
+    pure dice roll plus Discord/log reporting. Behaves the same in live and dry-run.
+    """
+    cfg = db.get_active_game(host_channel_id)
+    if cfg is None:
+        return None, "No active game. Use `!use_game <name>` first."
+    state = sheet_reader.load_game_state(cfg.sheet_id)
+    dead = db.dead_players(cfg.host_channel_id, cfg.name)
+    for player in state.players:
+        if normalize_name(player.player) in dead:
+            player.alive = False
+
+    result = resolve_silent_ita(target_name=target_name, hitrate=accuracy, state=state,
+                                is_dead=lambda name: db.is_dead(cfg.host_channel_id, cfg.name, name),
+                                dry_run=True, rng=rng)
+    if result.already_dead or (not result.success and not result.miss):
+        return result, result.message
+
+    outcome = "hit" if result.success else "miss"
+    db.log_event(cfg.host_channel_id, cfg.name, "ita_roll", result.target_name, outcome, shooter=shooter,
+                 roll=result.roll, hit_pct=result.hit_pct, dry_run=not live_mode)
+    await _send_log(bot, cfg, f"**ITA ROLL** target={result.target_name} outcome={outcome} "
+                              f"roll={result.roll:.1f} acc={accuracy:.1f}" + (f" shooter={shooter}" if shooter else ""))
+    verb = "HIT" if result.success else "MISS"
+    message = f"ITA {verb}: {result.target_name} (rolled {result.roll:.1f} vs {accuracy:.1f}%)"
+    return result, message
+
+
 def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool) -> None:
     async def _single_target_kill(ctx, args: str, event_type: str) -> None:
         player, reason = parse_pipe_args(args, 2)
@@ -348,6 +381,22 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
         _result, message = await ita_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
                                             live_mode=live_mode, host_channel_id=ctx.channel.id,
                                             target_name=target, source=source or None, post_link=post_link)
+        await ctx.reply(message)
+
+    @bot.command(name="resolve_ita")
+    async def resolve_ita(ctx, *, args: str = ""):
+        target, shooter, accuracy_raw = parse_pipe_args(args, 3)
+        if not target or not accuracy_raw:
+            await ctx.reply("Usage: `!resolve_ita <target> | <shooter> | <accuracy%>`")
+            return
+        try:
+            accuracy = float(accuracy_raw.rstrip("%").strip())
+        except ValueError:
+            await ctx.reply(f"Invalid accuracy: `{accuracy_raw}`")
+            return
+        _result, message = await ita_roll_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
+                                                 live_mode=live_mode, host_channel_id=ctx.channel.id,
+                                                 target_name=target, shooter=shooter or None, accuracy=accuracy)
         await ctx.reply(message)
 
     @bot.command(name="revive")
