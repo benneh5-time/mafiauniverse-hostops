@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from host_ops.mu_client import MUClient, extract_post_id_from_response, extract_security_token
+from host_ops.mu_client import MUClient, extract_post_id_from_response, extract_security_token, parse_post_number
 
 
 class FakeResponse:
@@ -115,3 +115,49 @@ def test_fetch_quote_bbcode_empty_response_raises():
     client = MUClient("u", "p", session=session)
     with pytest.raises(Exception):
         client.fetch_quote_bbcode(123, "11042484")
+
+
+# Real MU postbit markup carries the chronological number in data-postnumber on the <li>.
+POSTBIT_SAMPLE = (
+    '<li class="postbitlegacy postbitim postcontainer old" data-postnumber="1" id="post_11042392">first</li>'
+    '<li class="postbitlegacy postbitim postcontainer old" data-postnumber="7" id="post_11042417">seventh</li>'
+    '<li class="postbitlegacy postbitim postcontainer old" data-postnumber="30" id="post_11065447">thirtieth</li>'
+)
+
+
+def test_parse_post_number_finds_data_postnumber_for_post_id():
+    assert parse_post_number(POSTBIT_SAMPLE, "11042417") == "7"
+    assert parse_post_number(POSTBIT_SAMPLE, "11065447") == "30"
+
+
+def test_parse_post_number_missing_post_returns_none():
+    assert parse_post_number(POSTBIT_SAMPLE, "99999999") is None
+    assert parse_post_number("", "11042417") is None
+
+
+def test_set_threadmark_uses_provided_postnumber():
+    session = MagicMock()
+    session.get.return_value = FakeResponse(text='var SECURITYTOKEN = "tok";')
+    session.post.return_value = FakeResponse()
+    client = MUClient("u", "p", session=session)
+    client.set_threadmark(123, "11042417", "In-Thread Attack: X hit Y", postnumber="7")
+    data = session.post.call_args.kwargs["data"]
+    assert data["postnumber"] == "7"
+
+
+def test_post_reply_with_threadmark_parses_postnumber_from_reply():
+    session = MagicMock()
+    session.get.return_value = FakeResponse(text='var SECURITYTOKEN = "tok";')
+    # post_reply returns the thread page whose text carries the new post's data-postnumber
+    reply_page = FakeResponse(
+        url="https://mu/threads/61980?p=11042417#post11042417",
+        text=POSTBIT_SAMPLE,
+    )
+    session.post.return_value = reply_page
+    client = MUClient("u", "p", session=session)
+    _reply, _tm = client.post_reply_with_threadmark(61980, "message body", "In-Thread Attack: X hit Y")
+    # the final POST (threadmark) must carry postnumber 7 for post_id 11042417
+    threadmark_data = session.post.call_args.kwargs["data"]
+    assert threadmark_data["do"] == "set_threadmark"
+    assert threadmark_data["postid"] == "11042417"
+    assert threadmark_data["postnumber"] == "7"

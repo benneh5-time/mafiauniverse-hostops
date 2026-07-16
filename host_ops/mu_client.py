@@ -43,6 +43,27 @@ _GETQUOTES_CDATA_RE = re.compile(r"<quotes>\s*<!\[CDATA\[(.*?)\]\]>\s*</quotes>"
 _GETQUOTES_PLAIN_RE = re.compile(r"<quotes>(.*?)</quotes>", re.S)
 
 
+def parse_post_number(html: str, post_id: int | str) -> str | None:
+    """Return the chronological post number for ``post_id`` from thread/post HTML.
+
+    MU renders each post as ``<li ... data-postnumber="N" id="post_<post_id>">``.
+    Returns the number as a string, or None if the post is not present.
+    """
+    if not html or post_id is None:
+        return None
+    pid = str(post_id)
+    # data-postnumber and id may appear in either order on the <li>; match both arrangements.
+    pattern = re.compile(
+        r"<li\b[^>]*?(?:data-postnumber=\"(\d+)\"[^>]*?id=\"post_" + re.escape(pid) + r"\""
+        r"|id=\"post_" + re.escape(pid) + r"\"[^>]*?data-postnumber=\"(\d+)\")",
+        re.I,
+    )
+    match = pattern.search(html)
+    if not match:
+        return None
+    return match.group(1) or match.group(2)
+
+
 def _parse_getquotes(xml_text: str) -> str:
     """Extract the BBCode payload from a getquotes AJAX response.
 
@@ -139,9 +160,9 @@ class MUClient:
             raise MUClientError(f"MU post reply failed with status {result.status_code}")
         return PostedReply(result.text, result.status_code, result.final_url, result.post_id)
 
-    def set_threadmark(self, thread_id: int | str, post_id: str, name: str) -> Any:
+    def set_threadmark(self, thread_id: int | str, post_id: str, name: str, postnumber: str = "1") -> Any:
         token = self.token(thread_id)
-        response = mu_api.set_threadmark(self._session, thread_id, token, post_id, name, postnumber="1")
+        response = mu_api.set_threadmark(self._session, thread_id, token, post_id, name, postnumber=postnumber)
         response.raise_for_status()
         return response
 
@@ -149,7 +170,8 @@ class MUClient:
         reply = self.post_reply(thread_id, message)
         if not reply.post_id:
             raise MUClientError(f"Could not extract post id from posted reply redirect: {reply.final_url}")
-        return reply, self.set_threadmark(thread_id, reply.post_id, threadmark_name)
+        postnumber = parse_post_number(reply.text, reply.post_id) or "1"
+        return reply, self.set_threadmark(thread_id, reply.post_id, threadmark_name, postnumber=postnumber)
 
     def fetch_quote_bbcode(self, thread_id: int | str, post_id: int | str) -> str:
         """Fetch the original BBCode of a post via MU's getquotes AJAX endpoint.
