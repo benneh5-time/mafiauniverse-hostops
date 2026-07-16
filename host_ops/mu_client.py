@@ -39,6 +39,25 @@ def extract_post_id_from_response(response: Any) -> str | None:
     return mu_api.extract_post_id_from_response(response)
 
 
+_GETQUOTES_CDATA_RE = re.compile(r"<quotes>\s*<!\[CDATA\[(.*?)\]\]>\s*</quotes>", re.S)
+_GETQUOTES_PLAIN_RE = re.compile(r"<quotes>(.*?)</quotes>", re.S)
+
+
+def _parse_getquotes(xml_text: str) -> str:
+    """Extract the BBCode payload from a getquotes AJAX response.
+
+    The response wraps the post's BBCode in ``<quotes><![CDATA[...]]></quotes>``.
+    Returns the stripped payload, or an empty string if none is present.
+    """
+    if not xml_text:
+        return ""
+    match = _GETQUOTES_CDATA_RE.search(xml_text)
+    if match:
+        return match.group(1).strip()
+    match = _GETQUOTES_PLAIN_RE.search(xml_text)
+    return match.group(1).strip() if match else ""
+
+
 @dataclass(slots=True)
 class MUClient:
     username: str
@@ -131,6 +150,28 @@ class MUClient:
         if not reply.post_id:
             raise MUClientError(f"Could not extract post id from posted reply redirect: {reply.final_url}")
         return reply, self.set_threadmark(thread_id, reply.post_id, threadmark_name)
+
+    def fetch_quote_bbcode(self, thread_id: int | str, post_id: int | str) -> str:
+        """Fetch the original BBCode of a post via MU's getquotes AJAX endpoint.
+
+        Returns the post's BBCode already wrapped by MU as ``[QUOTE=...;post_id]...[/QUOTE]``.
+        """
+        self.login()
+        token = self.token(thread_id)
+        if not token or token == "guest":
+            raise MUClientError("Security token is 'guest' - session is not authenticated, cannot fetch quote")
+        response = self._session.post(
+            f"{self.base_url}/ajax.php",
+            params={"do": "getquotes", "p": str(post_id)},
+            data={"do": "getquotes", "p": str(post_id), "securitytoken": token},
+            timeout=self.timeout,
+        )
+        if response.status_code >= 400:
+            raise MUClientError(f"MU getquotes failed with status {response.status_code} for post {post_id}")
+        bbcode = _parse_getquotes(response.text)
+        if not bbcode:
+            raise MUClientError(f"MU getquotes returned no quote content for post {post_id}")
+        return bbcode
 
     def fetch_thread(self, thread_id: int | str, page: int | str = "lastpost") -> str:
         response = self._session.get(f"{self.base_url}/showthread.php", params={"t": thread_id, "page": page}, timeout=self.timeout)

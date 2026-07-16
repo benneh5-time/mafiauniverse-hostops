@@ -78,3 +78,40 @@ def test_threadmark_payload_uses_postnumber_one():
     assert data["do"] == "set_threadmark"
     assert data["postid"] == "999"
     assert data["postnumber"] == "1"
+
+
+GETQUOTES_SAMPLE = (
+    '<?xml version="1.0" encoding="utf-8"?>\n'
+    "<quotes><![CDATA[[QUOTE=MU Anniversary 2026;11042484][CENTER][TITLE]"
+    "[B]A shot rings out![/B][/TITLE][/CENTER]\n\ntest?[/QUOTE]\n\n]]></quotes>"
+)
+
+
+def test_fetch_quote_bbcode_posts_getquotes_with_token_and_post_id():
+    session = MagicMock()
+    session.get.return_value = FakeResponse(text='var SECURITYTOKEN = "tok";')
+    session.post.return_value = FakeResponse(text=GETQUOTES_SAMPLE)
+    client = MUClient("u", "p", session=session)
+
+    bbcode = client.fetch_quote_bbcode(123, "11042484")
+
+    # request shape
+    url = session.post.call_args.args[0]
+    data = session.post.call_args.kwargs["data"]
+    assert url == "https://www.mafiauniverse.com/forums/ajax.php"
+    assert data["do"] == "getquotes"
+    assert data["p"] == "11042484"
+    assert data["securitytoken"] == "tok"
+    # parsed BBCode is the CDATA payload, wrapped by MU, stripped of surrounding whitespace
+    assert bbcode.startswith("[QUOTE=MU Anniversary 2026;11042484]")
+    assert bbcode.endswith("[/QUOTE]")
+    assert "A shot rings out!" in bbcode
+
+
+def test_fetch_quote_bbcode_empty_response_raises():
+    session = MagicMock()
+    session.get.return_value = FakeResponse(text='var SECURITYTOKEN = "tok";')
+    session.post.return_value = FakeResponse(text="<quotes></quotes>")
+    client = MUClient("u", "p", session=session)
+    with pytest.raises(Exception):
+        client.fetch_quote_bbcode(123, "11042484")

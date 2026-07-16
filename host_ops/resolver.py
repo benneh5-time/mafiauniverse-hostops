@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import random
+import re
 from collections.abc import Callable
 
 from .models import BombResolveResult, GameState, ITASettings, Player, Protection, ResolveResult, normalize_name
+
+_POST_ID_LINK_RE = re.compile(r"(?:#post|[?&]p=)(\d+)")
 
 
 class ResolutionError(ValueError):
@@ -110,3 +113,44 @@ def resolve_death(*, target_name: str, event_type: str, phase: str, state: GameS
             return ResolveResult(False, target.player, event_type, f"ITA on {target.player} missed ({roll:.1f} > {hit_pct:.1f}).", miss=True, roll=roll, hit_pct=hit_pct, dry_run=dry_run)
         return ResolveResult(True, target.player, event_type, f"ITA on {target.player} hit ({roll:.1f} <= {hit_pct:.1f}).", roll=roll, hit_pct=hit_pct, dry_run=dry_run)
     return ResolveResult(True, target.player, event_type, f"{target.player} would be killed." if dry_run else f"{target.player} was killed.", dry_run=dry_run)
+
+
+def resolve_silent_ita(*, target_name: str, hitrate: float, state: GameState,
+                       is_dead: Callable[[str], bool] = lambda _name: False,
+                       dry_run: bool = True, rng: Callable[[], float] = random.random) -> ResolveResult:
+    """Silent ITA: roll against a caller-supplied hit rate. Sheet ITA settings are ignored."""
+    try:
+        target = resolve_player(target_name, state.players)
+    except ResolutionError as exc:
+        return ResolveResult(False, target_name, "silent_ita", str(exc), dry_run=dry_run)
+    if is_dead(target.player) or not target.alive:
+        return ResolveResult(False, target.player, "silent_ita", f"{target.player} is already dead.", dry_run=dry_run, already_dead=True)
+    roll = rng() * 100
+    if roll > hitrate:
+        return ResolveResult(False, target.player, "silent_ita", f"Silent ITA on {target.player} missed ({roll:.1f} > {hitrate:.1f}).", miss=True, roll=roll, hit_pct=hitrate, dry_run=dry_run)
+    return ResolveResult(True, target.player, "silent_ita", f"Silent ITA on {target.player} hit ({roll:.1f} <= {hitrate:.1f}).", roll=roll, hit_pct=hitrate, dry_run=dry_run)
+
+
+def build_silent_ita_announcement(target: Player, hit: bool) -> str:
+    header = "[BANNER]A Silent Shot Rings Out![/BANNER]"
+    if not hit:
+        return f"{header}\n\n[B]Miss![/B]"
+    return f"{header}\n\n[B]Hit![/B]\n\n{build_death_block(target)}"
+
+
+def silent_ita_threadmark_name(target: Player, hit: bool) -> str:
+    if not hit:
+        return "A Silent Shot Rings Out! Miss"
+    return f"A Silent Shot Rings Out! {target.player} is dead"
+
+
+def build_ita_announcement(quote_bbcode: str, target: Player) -> str:
+    """Quote (already wrapped by MU) + Hit! + standard death reveal."""
+    return f"{quote_bbcode.strip()}\n\n[B]Hit![/B]\n\n{build_death_block(target)}"
+
+
+def extract_post_id_from_link(link: str) -> str:
+    match = _POST_ID_LINK_RE.search(link or "")
+    if not match:
+        raise ResolutionError(f"Could not find a post id in link: {link}")
+    return match.group(1)

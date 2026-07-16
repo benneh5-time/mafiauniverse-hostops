@@ -1,12 +1,39 @@
 from __future__ import annotations
 
 import asyncio
+import random
 
 from ..db import HostOpsDB
-from ..models import normalize_name
+from ..models import ResolveResult, normalize_name
 from ..mu_client import MUClient
-from ..resolver import ResolutionError, build_death_announcement, resolve_bomb, resolve_death, resolve_player, threadmark_name
+from ..resolver import (
+    ResolutionError,
+    build_death_announcement,
+    build_ita_announcement,
+    build_silent_ita_announcement,
+    extract_post_id_from_link,
+    resolve_bomb,
+    resolve_death,
+    resolve_player,
+    resolve_silent_ita,
+    silent_ita_threadmark_name,
+    threadmark_name,
+)
 from ..sheets import SheetReader
+
+DEFAULT_SILENT_ITA_HITRATE = 18.0
+
+
+def parse_pipe_args(args: str, count: int) -> list[str]:
+    """Split a ``|``-delimited arg string into exactly ``count`` trimmed fields.
+
+    Missing trailing fields are padded with empty strings.
+    """
+    parts = [part.strip() for part in (args or "").split("|")]
+    parts = parts[:count]
+    while len(parts) < count:
+        parts.append("")
+    return parts
 
 
 def _outcome(result) -> str:
@@ -128,6 +155,117 @@ async def resolve_bomb_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, 
     return bomb, message
 
 
+async def _modbot_precheck(mu_client, cfg, target) -> str | None:
+    """Return an abort message if MU modbot already shows the target dead, else None."""
+    if not cfg.game_id:
+        return None
+    mu_statuses = await asyncio.to_thread(mu_client.fetch_player_statuses, cfg.game_id)
+    if mu_statuses.get(target.mu_username.lower()) is False:
+        return f"{target.player} is already dead in MU modbot — kill aborted."
+    return None
+
+
+def _kill_confirmed(kill_response) -> bool:
+    return isinstance(kill_response, dict) and "successful" in kill_response.get("response", "").lower()
+
+
+async def silent_ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
+                            host_channel_id: int, target_name: str, source: str | None, hitrate: float | None,
+                            rng=random.random):
+    cfg = db.get_active_game(host_channel_id)
+    if cfg is None:
+        return None, "No active game. Use `!use_game <name>` first."
+    if hitrate is None:
+        hitrate = DEFAULT_SILENT_ITA_HITRATE
+    state = sheet_reader.load_game_state(cfg.sheet_id)
+    dead = db.dead_players(cfg.host_channel_id, cfg.name)
+    for player in state.players:
+        if normalize_name(player.player) in dead:
+            player.alive = False
+
+    result = resolve_silent_ita(target_name=target_name, hitrate=hitrate, state=state,
+                                is_dead=lambda name: db.is_dead(cfg.host_channel_id, cfg.name, name),
+                                dry_run=not live_mode, rng=rng)
+    if result.already_dead or (not result.success and not result.miss):
+        return result, result.message
+
+    hit = result.success
+    target = resolve_player(result.target_name, state.players)
+    announcement = build_silent_ita_announcement(target, hit)
+    threadmark = silent_ita_threadmark_name(target, hit)
+    mu_post_id = None
+
+    if live_mode:
+        if hit:
+            abort = await _modbot_precheck(mu_client, cfg, target)
+            if abort:
+                return result, abort
+            kill_response = await asyncio.to_thread(mu_client.kill, cfg.thread_id, target.mu_username)
+            if not _kill_confirmed(kill_response):
+                return result, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
+            result.mu_response = kill_response
+        reply, _tm = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark)
+        mu_post_id = reply.post_id
+        result.announcement_post_id = reply.post_id
+        result.threadmark_ok = True
+
+    if hit:
+        db.mark_dead(cfg.host_channel_id, cfg.name, result.target_name, "silent_ita")
+
+    outcome = "killed" if hit else "missed"
+    db.log_event(cfg.host_channel_id, cfg.name, "silent_ita", result.target_name, outcome, shooter=source,
+                 roll=result.roll, hit_pct=result.hit_pct, dry_run=not live_mode, mu_post_id=mu_post_id)
+    prefix = "[DRY RUN] " if not live_mode else ""
+    await _send_log(bot, cfg, f"{prefix}**SILENT_ITA** target={result.target_name} outcome={outcome}" + (f" source={source}" if source else ""))
+    return result, result.message
+
+
+async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
+                     host_channel_id: int, target_name: str, source: str | None, post_link: str):
+    cfg = db.get_active_game(host_channel_id)
+    if cfg is None:
+        return None, "No active game. Use `!use_game <name>` first."
+    try:
+        post_id = extract_post_id_from_link(post_link)
+    except ResolutionError as exc:
+        return None, str(exc)
+
+    state = sheet_reader.load_game_state(cfg.sheet_id)
+    dead = db.dead_players(cfg.host_channel_id, cfg.name)
+    for player in state.players:
+        if normalize_name(player.player) in dead:
+            player.alive = False
+    try:
+        target = resolve_player(target_name, state.players)
+    except ResolutionError as exc:
+        return None, str(exc)
+    if db.is_dead(cfg.host_channel_id, cfg.name, target.player) or not target.alive:
+        return None, f"{target.player} is already dead."
+
+    mu_post_id = None
+    if live_mode:
+        quote_bbcode = await asyncio.to_thread(mu_client.fetch_quote_bbcode, cfg.thread_id, post_id)
+        announcement = build_ita_announcement(quote_bbcode, target)
+        abort = await _modbot_precheck(mu_client, cfg, target)
+        if abort:
+            return None, abort
+        kill_response = await asyncio.to_thread(mu_client.kill, cfg.thread_id, target.mu_username)
+        if not _kill_confirmed(kill_response):
+            return None, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
+        reply, _tm = await asyncio.to_thread(
+            mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark_name(target, "ita"))
+        mu_post_id = reply.post_id
+
+    db.mark_dead(cfg.host_channel_id, cfg.name, target.player, "ita")
+    db.log_event(cfg.host_channel_id, cfg.name, "ita", target.player, "killed", shooter=source,
+                 dry_run=not live_mode, mu_post_id=mu_post_id, notes=f"quote post {post_id}")
+    prefix = "[DRY RUN] " if not live_mode else ""
+    await _send_log(bot, cfg, f"{prefix}**ITA** target={target.player} outcome=killed" + (f" source={source}" if source else ""))
+    result = ResolveResult(True, target.player, "ita", f"{prefix}ITA hit: {target.player} is dead.",
+                           dry_run=not live_mode, announcement_post_id=mu_post_id)
+    return result, result.message
+
+
 def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool) -> None:
     @bot.command(name="kill")
     async def kill(ctx, player: str, *, reason: str = ""):
@@ -149,9 +287,31 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
         _result, message = await resolve_bomb_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, bomber_name=bomber, bombee_name=bombee, reason=reason)
         await ctx.reply(message)
 
-    @bot.command(name="resolve_ita")
-    async def resolve_ita(ctx, player: str, shooter: str = "", *, reason: str = ""):
-        _result, message = await resolve_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, target_name=player, event_type="ita", shooter=shooter or None, reason=reason)
+    @bot.command(name="silent_ita")
+    async def silent_ita(ctx, *, args: str = ""):
+        target, source, hitrate_raw = parse_pipe_args(args, 3)
+        if not target:
+            await ctx.reply("Usage: `!silent_ita <target> | <source> | <hitrate>` (hitrate default 18)")
+            return
+        try:
+            hitrate = float(hitrate_raw.rstrip("%").strip()) if hitrate_raw else None
+        except ValueError:
+            await ctx.reply(f"Invalid hitrate: `{hitrate_raw}`")
+            return
+        _result, message = await silent_ita_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
+                                                    live_mode=live_mode, host_channel_id=ctx.channel.id,
+                                                    target_name=target, source=source or None, hitrate=hitrate)
+        await ctx.reply(message)
+
+    @bot.command(name="ita")
+    async def ita(ctx, *, args: str = ""):
+        target, source, post_link = parse_pipe_args(args, 3)
+        if not target or not post_link:
+            await ctx.reply("Usage: `!ita <target> | <source> | <post link>`")
+            return
+        _result, message = await ita_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
+                                            live_mode=live_mode, host_channel_id=ctx.channel.id,
+                                            target_name=target, source=source or None, post_link=post_link)
         await ctx.reply(message)
 
     @bot.command(name="revive")
