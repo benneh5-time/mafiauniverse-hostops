@@ -66,7 +66,7 @@ def test_silent_ita_live_hit_kills_and_posts(db, basic_state):
     announcement, threadmark = args[1], args[2]
     assert "[TITLE]A Silent Shot Rings Out![/TITLE]" in announcement
     assert "[B]Hit![/B]" in announcement
-    assert threadmark == "A Silent Shot Rings Out! Alice is dead"
+    assert threadmark == "A Silent Shot Rings Out! Alice was hit"
     assert db.is_dead(10, "g", "Alice")
     assert "https://www.mafiauniverse.com/forums/threads/123?p=555#post555" in message
 

@@ -142,7 +142,8 @@ def build_silent_ita_announcement(target: Player, hit: bool) -> str:
 def silent_ita_threadmark_name(target: Player, hit: bool) -> str:
     if not hit:
         return "A Silent Shot Rings Out! Miss"
-    return f"A Silent Shot Rings Out! {target.player} is dead"
+    role = f" and was {target.role_name}" if target.role_name else ""
+    return f"A Silent Shot Rings Out! {target.player} was hit{role}"
 
 
 def build_ita_announcement(quote_bbcode: str, target: Player) -> str:

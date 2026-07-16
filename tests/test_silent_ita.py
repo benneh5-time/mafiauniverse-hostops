@@ -81,11 +81,16 @@ def test_silent_ita_announcement_hit_has_title_hit_and_reveal():
     assert "[SPOILER]Redacted Alice[/SPOILER]" in text
 
 
-def test_silent_ita_threadmark_hit_names_target_no_role():
+def test_silent_ita_threadmark_hit_names_target_and_role():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop")
     name = silent_ita_threadmark_name(target, hit=True)
-    assert name == "A Silent Shot Rings Out! Alice is dead"
-    assert "Cop" not in name
+    assert name == "A Silent Shot Rings Out! Alice was hit and was Cop"
+
+
+def test_silent_ita_threadmark_hit_without_role():
+    target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="")
+    name = silent_ita_threadmark_name(target, hit=True)
+    assert name == "A Silent Shot Rings Out! Alice was hit"
 
 
 def test_silent_ita_threadmark_miss_reveals_nothing():
