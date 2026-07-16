@@ -7,6 +7,7 @@ from collections.abc import Callable
 from .models import BombResolveResult, GameState, ITASettings, Player, Protection, ResolveResult, normalize_name
 
 _POST_ID_LINK_RE = re.compile(r"(?:#post|[?&]p=)(\d+)")
+_QUOTE_AUTHOR_RE = re.compile(r"\[QUOTE=([^;\]]+);\d+\]", re.I)
 
 
 class ResolutionError(ValueError):
@@ -132,7 +133,7 @@ def resolve_silent_ita(*, target_name: str, hitrate: float, state: GameState,
 
 
 def build_silent_ita_announcement(target: Player, hit: bool) -> str:
-    header = "[BANNER]A Silent Shot Rings Out![/BANNER]"
+    header = "[TITLE]A Silent Shot Rings Out![/TITLE]"
     if not hit:
         return f"{header}\n\n[B]Miss![/B]"
     return f"{header}\n\n[B]Hit![/B]\n\n{build_death_block(target)}"
@@ -154,3 +155,20 @@ def extract_post_id_from_link(link: str) -> str:
     if not match:
         raise ResolutionError(f"Could not find a post id in link: {link}")
     return match.group(1)
+
+
+def extract_quote_author(quote_bbcode: str) -> str | None:
+    """Return the username from a MU quote header ``[QUOTE=<username>;<postid>]``.
+
+    MU puts the quoted post's author in the label. Returns None if the quote has no
+    attribution (bare ``[QUOTE]``) or no quote header at all.
+    """
+    match = _QUOTE_AUTHOR_RE.search(quote_bbcode or "")
+    if not match:
+        return None
+    return match.group(1).strip() or None
+
+
+def ita_threadmark_name(shooter: str, target: Player) -> str:
+    role = f" who was {target.role_name}" if target.role_name else ""
+    return f"In-Thread Attack: {shooter} hit {target.player}{role}"

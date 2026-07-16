@@ -12,6 +12,8 @@ from ..resolver import (
     build_ita_announcement,
     build_silent_ita_announcement,
     extract_post_id_from_link,
+    extract_quote_author,
+    ita_threadmark_name,
     resolve_bomb,
     resolve_death,
     resolve_player,
@@ -262,6 +264,7 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
     if live_mode:
         quote_bbcode = await asyncio.to_thread(mu_client.fetch_quote_bbcode, cfg.thread_id, post_id)
         announcement = build_ita_announcement(quote_bbcode, target)
+        shooter = extract_quote_author(quote_bbcode) or source or "Unknown"
         abort = await _modbot_precheck(mu_client, cfg, target)
         if abort:
             return None, abort
@@ -269,7 +272,7 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
         if not _kill_confirmed(kill_response):
             return None, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
         reply, _tm = await asyncio.to_thread(
-            mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark_name(target, "ita"))
+            mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, ita_threadmark_name(shooter, target))
         mu_post_id = reply.post_id
         post_link = _post_link(reply, cfg.thread_id)
 

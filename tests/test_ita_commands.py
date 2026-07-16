@@ -64,7 +64,7 @@ def test_silent_ita_live_hit_kills_and_posts(db, basic_state):
     # announcement + threadmark posted
     args = mu.post_reply_with_threadmark.call_args.args
     announcement, threadmark = args[1], args[2]
-    assert "[BANNER]A Silent Shot Rings Out![/BANNER]" in announcement
+    assert "[TITLE]A Silent Shot Rings Out![/TITLE]" in announcement
     assert "[B]Hit![/B]" in announcement
     assert threadmark == "A Silent Shot Rings Out! Alice is dead"
     assert db.is_dead(10, "g", "Alice")
@@ -85,6 +85,7 @@ def test_silent_ita_live_miss_posts_threadmark_no_kill(db, basic_state):
     mu.kill.assert_not_called()
     args = mu.post_reply_with_threadmark.call_args.args
     announcement, threadmark = args[1], args[2]
+    assert "[TITLE]A Silent Shot Rings Out![/TITLE]" in announcement
     assert "[B]Miss![/B]" in announcement
     assert threadmark == "A Silent Shot Rings Out! Miss"
     assert not db.is_dead(10, "g", "Alice")
@@ -120,7 +121,7 @@ def test_ita_live_quotes_kills_and_posts(db, basic_state):
     bot = MagicMock()
     bot.get_channel.return_value = AsyncMock()
     mu = MagicMock()
-    mu.fetch_quote_bbcode.return_value = "[QUOTE=Label;11042484]original[/QUOTE]"
+    mu.fetch_quote_bbcode.return_value = "[QUOTE=Mashy;11042484]I shoot Alice[/QUOTE]"
     mu.kill.return_value = {"response": "Kill was successful"}
     reply = MagicMock(post_id="555", final_url="https://www.mafiauniverse.com/forums/threads/9?p=555#post555")
     mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
@@ -132,9 +133,11 @@ def test_ita_live_quotes_kills_and_posts(db, basic_state):
     mu.fetch_quote_bbcode.assert_called_once()
     assert mu.fetch_quote_bbcode.call_args.args[1] == "11042484"
     mu.kill.assert_called_once()
-    announcement = mu.post_reply_with_threadmark.call_args.args[1]
-    assert announcement.startswith("[QUOTE=Label;11042484]original[/QUOTE]")
+    announcement, threadmark = mu.post_reply_with_threadmark.call_args.args[1], mu.post_reply_with_threadmark.call_args.args[2]
+    assert announcement.startswith("[QUOTE=Mashy;11042484]I shoot Alice[/QUOTE]")
     assert "[B]Hit![/B]" in announcement
+    # threadmark names the quoted shooter, the target, and the role (Alice is town in basic_state, no role_name)
+    assert threadmark == "In-Thread Attack: Mashy hit Alice"
     assert db.is_dead(10, "g", "Alice")
     # reply links to the created post
     assert "https://www.mafiauniverse.com/forums/threads/9?p=555#post555" in message
