@@ -46,6 +46,14 @@ def choose_ita_settings(target: Player, phase: str, settings: list[ITASettings])
     return global_rows[-1] if global_rows else ITASettings(default_hit_pct=0.0)
 
 
+def _protection_warning(target: Player, protections: list[str]) -> str | None:
+    if not protections:
+        return None
+    return (f"⚠️ {target.player} may be protected: {', '.join(protections)}. "
+            f"Nothing was posted. Re-run with `| confirm` to override "
+            f"(check MU / `!pull_ita` first if unsure).")
+
+
 def ita_protection_warning(target: Player, state: GameState, phase: str = "any") -> str | None:
     """Warn if the target's ITA settings show an active shield or BPV.
 
@@ -59,11 +67,20 @@ def ita_protection_warning(target: Player, state: GameState, phase: str = "any")
         protections.append(f"ITA shield (shield_status={chosen.shield_status})")
     if chosen.bpv_status:
         protections.append(f"BPV (bpv_status={chosen.bpv_status})")
-    if not protections:
-        return None
-    return (f"⚠️ {target.player} may be protected: {', '.join(protections)}. "
-            f"Nothing was posted. Re-run with `| confirm` to override "
-            f"(check MU / `!pull_ita` first if unsure).")
+    return _protection_warning(target, protections)
+
+
+def bpv_warning(target: Player, state: GameState, phase: str = "any") -> str | None:
+    """Warn if the target has an active BPV (bulletproof vest).
+
+    BPV is a general bullet-immunity mechanic (not ITA-only), so it applies to regular
+    kills/dayvig/desperado/bomb. ITA shields are ignored here. Returns a warning or None.
+    """
+    chosen = choose_ita_settings(target, phase, state.ita_settings)
+    protections = []
+    if chosen.bpv_status:
+        protections.append(f"BPV (bpv_status={chosen.bpv_status})")
+    return _protection_warning(target, protections)
 
 
 def ita_hit_pct(target: Player, phase: str, settings: list[ITASettings]) -> tuple[float, bool]:
@@ -78,24 +95,34 @@ def build_death_block(target: Player) -> str:
     return f"[B]{target.player}[/B] has died. [B]{target.player}[/B] was:\n\n[SPOILER]{target.redacted_role_pm}[/SPOILER]"
 
 
-def build_death_announcement(target: Player, event_type: str, reason: str = "") -> str:
+def _death_header(event_type: str) -> str:
     if event_type == "ita":
-        header = "[CENTER][TITLE][B]An ITA hits![/B][/TITLE][/CENTER]"
-    elif event_type == "desperado":
-        header = "[CENTER][TITLE][B]A desperado shot rings out![/B][/TITLE][/CENTER]"
-    else:
-        header = "[CENTER][TITLE][B]A shot rings out![/B][/TITLE][/CENTER]"
+        return "[CENTER][TITLE][B]An ITA hits![/B][/TITLE][/CENTER]"
+    if event_type == "desperado":
+        return "[CENTER][TITLE][B]A desperado shot rings out![/B][/TITLE][/CENTER]"
+    return "[CENTER][TITLE][B]A shot rings out![/B][/TITLE][/CENTER]"
+
+
+def _death_label(event_type: str) -> str:
+    if event_type == "ita":
+        return "An ITA hits!"
+    if event_type == "desperado":
+        return "A desperado shot rings out!"
+    return "A shot rings out!"
+
+
+def build_death_announcement(target: Player, event_type: str, reason: str = "", vest: bool = False) -> str:
+    header = _death_header(event_type)
+    if vest:
+        return f"{header}\n\n[B]No one has died.[/B]"
     reason_text = f"\n\n{reason.strip()}" if reason and reason.strip() else ""
     return f"{header}\n\n{build_death_block(target)}{reason_text}"
 
 
-def threadmark_name(target: Player, event_type: str) -> str:
-    if event_type == "ita":
-        label = "An ITA hits!"
-    elif event_type == "desperado":
-        label = "A desperado shot rings out!"
-    else:
-        label = "A shot rings out!"
+def threadmark_name(target: Player, event_type: str, vest: bool = False) -> str:
+    label = _death_label(event_type)
+    if vest:
+        return f"{label} No one has died."
     suffix = f", {target.role_name}" if target.role_name else ""
     return f"{label} {target.player} is dead{suffix}"
 

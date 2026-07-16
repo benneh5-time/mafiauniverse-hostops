@@ -11,6 +11,7 @@ from ..resolver import (
     build_death_announcement,
     build_ita_announcement,
     build_silent_ita_announcement,
+    bpv_warning,
     extract_post_id_from_link,
     extract_quote_author,
     ita_protection_warning,
@@ -66,10 +67,11 @@ async def _send_log(bot, cfg, text: str) -> None:
 
 async def resolve_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
                          host_channel_id: int, target_name: str, event_type: str, phase: str = "any",
-                         shooter: str | None = None, reason: str = ""):
+                         shooter: str | None = None, reason: str = "", mode: str | None = None):
     cfg = db.get_active_game(host_channel_id)
     if cfg is None:
         return None, "No active game. Use `!use_game <name>` first."
+    mode = _normalize_mode(mode)
     state = sheet_reader.load_game_state(cfg.sheet_id)
     dead = db.dead_players(cfg.host_channel_id, cfg.name)
     for player in state.players:
@@ -83,29 +85,41 @@ async def resolve_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_cl
         is_dead=lambda name: db.is_dead(cfg.host_channel_id, cfg.name, name),
         dry_run=not live_mode,
     )
-    outcome = _outcome(result)
+
+    vest = result.success and mode == "vest"
+    # A real flip cannot be undone, so guard a successful kill against a BPV target.
+    if result.success and not vest and mode != "confirm":
+        target = resolve_player(result.target_name, state.players)
+        warning = bpv_warning(target, state)
+        if warning:
+            return None, warning
+
+    outcome = "vest_pop" if vest else _outcome(result)
+    kills = result.success and not vest
     mu_post_id = None
     post_link = None
     if result.success and live_mode:
         target = resolve_player(result.target_name, state.players)
-        if cfg.game_id:
+        if kills and cfg.game_id:
             mu_statuses = await asyncio.to_thread(mu_client.fetch_player_statuses, cfg.game_id)
             mu_alive = mu_statuses.get(target.mu_username.lower())
             if mu_alive is False:
                 return result, f"{target.player} is already dead in MU modbot — kill aborted."
-        kill_response = await asyncio.to_thread(mu_client.kill, cfg.thread_id, target.mu_username)
-        kill_ok = isinstance(kill_response, dict) and "successful" in kill_response.get("response", "").lower()
-        if not kill_ok:
-            return result, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
-        announcement = build_death_announcement(target, event_type, reason)
-        reply, _threadmark_response = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark_name(target, event_type))
+        if kills:
+            kill_response = await asyncio.to_thread(mu_client.kill, cfg.thread_id, target.mu_username)
+            kill_ok = isinstance(kill_response, dict) and "successful" in kill_response.get("response", "").lower()
+            if not kill_ok:
+                return result, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
+            result.mu_response = kill_response
+        announcement = build_death_announcement(target, event_type, reason, vest=vest)
+        reply, _threadmark_response = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark_name(target, event_type, vest=vest))
         mu_post_id = reply.post_id
         post_link = _post_link(reply, cfg.thread_id)
-        result.mu_response = kill_response
         result.announcement_post_id = reply.post_id
         result.threadmark_ok = True
-        db.mark_dead(cfg.host_channel_id, cfg.name, result.target_name, event_type)
-    elif result.success and not live_mode:
+        if kills:
+            db.mark_dead(cfg.host_channel_id, cfg.name, result.target_name, event_type)
+    elif kills and not live_mode:
         db.mark_dead(cfg.host_channel_id, cfg.name, result.target_name, event_type)
 
     db.log_event(cfg.host_channel_id, cfg.name, event_type, result.target_name, outcome, shooter=shooter,
@@ -113,15 +127,18 @@ async def resolve_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_cl
                  mu_post_id=mu_post_id, notes=reason or None)
     prefix = "[DRY RUN] " if not live_mode else ""
     await _send_log(bot, cfg, f"{prefix}**{event_type.upper()}** target={result.target_name} outcome={outcome}" + (f" shooter={shooter}" if shooter else ""))
-    message = result.message + (f"\n{post_link}" if post_link else "")
+    reply_text = f"{prefix}Vest popped on {result.target_name} (no kill)." if vest else result.message
+    message = reply_text + (f"\n{post_link}" if post_link else "")
     return result, message
 
 
 async def resolve_bomb_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
-                              host_channel_id: int, bomber_name: str, bombee_name: str, reason: str = ""):
+                              host_channel_id: int, bomber_name: str, bombee_name: str, reason: str = "",
+                              mode: str | None = None):
     cfg = db.get_active_game(host_channel_id)
     if cfg is None:
         return None, "No active game. Use `!use_game <name>` first."
+    mode = _normalize_mode(mode)
     state = sheet_reader.load_game_state(cfg.sheet_id)
     dead = db.dead_players(cfg.host_channel_id, cfg.name)
     for player in state.players:
@@ -137,6 +154,13 @@ async def resolve_bomb_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, 
     except ResolutionError as exc:
         return None, str(exc)
 
+    vest = mode == "vest"
+    # Only the bombee can be protected (the bomber always dies). Guard against BPV.
+    if not vest and mode != "confirm":
+        warning = bpv_warning(bomb.bombee, state)
+        if warning:
+            return None, warning
+
     mu_post_id = None
     post_link = None
     if live_mode:
@@ -144,30 +168,37 @@ async def resolve_bomb_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, 
         bomber_ok = isinstance(bomber_kill, dict) and "successful" in bomber_kill.get("response", "").lower()
         if not bomber_ok:
             return None, f"MU kill did not confirm success for {bomb.bomber.player} — post/threadmark skipped. MU said: {bomber_kill}"
-        bombee_kill = await asyncio.to_thread(mu_client.kill, cfg.thread_id, bomb.bombee.mu_username)
-        bombee_ok = isinstance(bombee_kill, dict) and "successful" in bombee_kill.get("response", "").lower()
-        if not bombee_ok:
-            return None, f"MU kill did not confirm success for {bomb.bombee.player} — post/threadmark skipped. MU said: {bombee_kill}"
-        announcement = bomb.build_announcement(reason)
-        reply, _threadmark_response = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, bomb.threadmark_name())
+        bomb.mu_response_bomber = bomber_kill
+        if not vest:
+            bombee_kill = await asyncio.to_thread(mu_client.kill, cfg.thread_id, bomb.bombee.mu_username)
+            bombee_ok = isinstance(bombee_kill, dict) and "successful" in bombee_kill.get("response", "").lower()
+            if not bombee_ok:
+                return None, f"MU kill did not confirm success for {bomb.bombee.player} — post/threadmark skipped. MU said: {bombee_kill}"
+            bomb.mu_response_bombee = bombee_kill
+        announcement = bomb.build_announcement(reason, vest=vest)
+        reply, _threadmark_response = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, bomb.threadmark_name(vest=vest))
         mu_post_id = reply.post_id
         post_link = _post_link(reply, cfg.thread_id)
-        bomb.mu_response_bomber = bomber_kill
-        bomb.mu_response_bombee = bombee_kill
         bomb.announcement_post_id = reply.post_id
         bomb.threadmark_ok = True
 
     bomb.dry_run = not live_mode
-    for player in (bomb.bomber, bomb.bombee):
+    victims = [bomb.bomber] if vest else [bomb.bomber, bomb.bombee]
+    for player in victims:
         db.mark_dead(cfg.host_channel_id, cfg.name, player.player, "bomb")
         db.log_event(cfg.host_channel_id, cfg.name, "bomb", player.player, "killed", dry_run=not live_mode,
                      mu_post_id=mu_post_id, notes=reason or None)
 
     prefix = "[DRY RUN] " if not live_mode else ""
-    message = f"{prefix}Bomb resolved: {bomb.bomber.player} and {bomb.bombee.player} are dead."
+    if vest:
+        message = f"{prefix}Bomb resolved: {bomb.bomber.player} is dead; {bomb.bombee.player} survived (vest)."
+        log_outcome = f"bomber={bomb.bomber.player} bombee={bomb.bombee.player} outcome=vest_pop"
+    else:
+        message = f"{prefix}Bomb resolved: {bomb.bomber.player} and {bomb.bombee.player} are dead."
+        log_outcome = f"bomber={bomb.bomber.player} bombee={bomb.bombee.player} outcome=killed"
     if post_link:
         message += f"\n{post_link}"
-    await _send_log(bot, cfg, f"{prefix}**BOMB** bomber={bomb.bomber.player} bombee={bomb.bombee.player} outcome=killed")
+    await _send_log(bot, cfg, f"{prefix}**BOMB** {log_outcome}")
     return bomb, message
 
 
@@ -360,11 +391,11 @@ async def ita_roll_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_c
 
 def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool) -> None:
     async def _single_target_kill(ctx, args: str, event_type: str) -> None:
-        player, reason = parse_pipe_args(args, 2)
+        player, reason, mode = parse_pipe_args(args, 3)
         if not player:
-            await ctx.reply(f"Usage: `!{event_type} <player> | <reason>`")
+            await ctx.reply(f"Usage: `!{event_type} <player> | <reason> | [confirm|vest]`")
             return
-        _result, message = await resolve_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, target_name=player, event_type=event_type, reason=reason)
+        _result, message = await resolve_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, target_name=player, event_type=event_type, reason=reason, mode=mode)
         await ctx.reply(message)
 
     @bot.command(name="kill")
@@ -381,11 +412,11 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
 
     @bot.command(name="bomb")
     async def bomb(ctx, *, args: str = ""):
-        bomber, bombee, reason = parse_pipe_args(args, 3)
+        bomber, bombee, reason, mode = parse_pipe_args(args, 4)
         if not bomber or not bombee:
-            await ctx.reply("Usage: `!bomb <bomber> | <bombee> | <reason>`")
+            await ctx.reply("Usage: `!bomb <bomber> | <bombee> | <reason> | [confirm|vest]`")
             return
-        _result, message = await resolve_bomb_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, bomber_name=bomber, bombee_name=bombee, reason=reason)
+        _result, message = await resolve_bomb_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=live_mode, host_channel_id=ctx.channel.id, bomber_name=bomber, bombee_name=bombee, reason=reason, mode=mode)
         await ctx.reply(message)
 
     @bot.command(name="silent_ita")
