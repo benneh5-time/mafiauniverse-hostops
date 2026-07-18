@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 EXPORT_DIR = Path("data")
 
 # Politeness delay between per-post getquotes calls, in seconds.
-POST_FETCH_DELAY = 0.4
+POST_FETCH_DELAY = 0.1
 
 # Thread id from a MU thread URL, e.g. /threads/60309-Some-Title or /threads/60309/
 # or ?t=60309. Falls back to a bare number.

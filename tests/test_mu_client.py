@@ -35,6 +35,33 @@ def test_login_payload_uses_md5():
     assert data["securitytoken"] == "guest"
 
 
+def test_login_skipped_when_already_authenticated():
+    import requests
+
+    session = requests.Session()
+    session.cookies.set("bb_userid", "4242")
+    session.post = MagicMock(return_value=FakeResponse())
+    client = MUClient("user", "pass", session=session)
+
+    client.login()  # cookie already present -> no login POST
+    session.post.assert_not_called()
+
+    client.login(force=True)  # force re-issues the login POST
+    session.post.assert_called_once()
+
+
+def test_login_runs_when_userid_is_guest_zero():
+    import requests
+
+    session = requests.Session()
+    session.cookies.set("bb_userid", "0")
+    session.post = MagicMock(return_value=FakeResponse())
+    client = MUClient("user", "pass", session=session)
+
+    client.login()  # userid "0" is not authenticated -> must log in
+    session.post.assert_called_once()
+
+
 def test_extract_security_token_script_and_input():
     assert extract_security_token('var SECURITYTOKEN = "abc";') == "abc"
     assert extract_security_token('<input name="securitytoken" value="def">') == "def"

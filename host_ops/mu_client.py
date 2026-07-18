@@ -107,7 +107,21 @@ class MUClient:
         self._session = self.session or requests.Session()
         self._session.headers.update({"User-Agent": "Mozilla/5.0"})
 
-    def login(self) -> Any:
+    def _is_logged_in(self) -> bool:
+        """True if the session already holds a valid (non-guest) MU login cookie."""
+        try:
+            cookies = {c.name: c.value for c in self._session.cookies}
+        except TypeError:
+            # Non-iterable cookie jar (e.g. a bare mock in tests) -> treat as logged out.
+            return False
+        bb_userid = cookies.get("bb_userid") or cookies.get("bbuserid")
+        return bool(bb_userid) and bb_userid != "0"
+
+    def login(self, force: bool = False) -> Any:
+        # The session persists cookies across calls, so once authenticated we can
+        # reuse the existing login instead of re-POSTing credentials every call.
+        if not force and self._is_logged_in():
+            return None
         md5_password = hashlib.md5(self.password.encode("utf-8")).hexdigest()
         payload = {
             "do": "login",
