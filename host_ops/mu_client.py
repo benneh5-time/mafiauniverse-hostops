@@ -215,6 +215,16 @@ class MUClient:
         response.raise_for_status()
         return response.text
 
+    def fetch_all_thread_posts(self, thread_id: int | str) -> list[dict]:
+        """Return every post in a thread, in ascending order, across all pages.
+
+        Delegates to the shared client's pagination. Each dict carries at least
+        ``post_id`` and ``author`` (see ``mafiauniverse.client.parse_posts``).
+        Requires an authenticated session, so this logs in first.
+        """
+        self.login()
+        return mu_api.fetch_all_posts(thread_id, session=self._session)
+
     def extract_game_id(self, thread_id: int | str) -> str | None:
         response = self._session.get(f"{self.base_url}/threads/{thread_id}", timeout=self.timeout)
         response.raise_for_status()

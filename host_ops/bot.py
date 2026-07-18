@@ -9,7 +9,7 @@ from discord.ext import commands
 import csv
 from pathlib import Path
 
-from .commands import actions, host, info, rolepm
+from .commands import actions, host, info, rolepm, roles_export
 from .config import load_settings
 from .db import HostOpsDB
 from .mu_client import MUClient
@@ -49,6 +49,7 @@ def create_bot():
     actions.register(bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client, live_mode=settings.live_mode)
     info.register(bot, db=db, sheet_reader=sheet_reader)
     rolepm.register(bot, mu_user_ids=_mu_user_ids, mu_client=mu_client)
+    roles_export.register(bot, mu_client=mu_client)
 
     async def resolve_manual_ita(*, cfg, player_name: str, post_id: str) -> None:
         await actions.resolve_action(
