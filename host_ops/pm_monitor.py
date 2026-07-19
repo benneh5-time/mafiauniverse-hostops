@@ -1,128 +1,120 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import logging
 import re
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-from bs4 import BeautifulSoup
 from discord.ext import tasks
 
 log = logging.getLogger(__name__)
 
-_PMID_RE = re.compile(r"pm_(\d+)")
-# MU's quick-reply textarea pre-fills the body wrapped as [QUOTE=Author]...[/QUOTE].
-_OUTER_QUOTE_RE = re.compile(r"^\s*\[QUOTE=[^\]]*\](.*)\[/QUOTE\]\s*$", re.S | re.I)
+# MU's downloadpm CSV renders timestamps in US Pacific (DST-aware: PST/PDT).
+PACIFIC = ZoneInfo("America/Los_Angeles")
+_CSV_DATE_FMT = "%Y-%m-%d %H:%M"
 
 DISCORD_LIMIT = 2000
 
 
-def parse_unread_pmids(html: str) -> list[int]:
-    """Return pmids of unread messages on an inbox page, in page (newest-first) order.
+def parse_pm_csv(text: str) -> list[dict]:
+    """Parse a downloadpm CSV into Inbox rows, newest-first order preserved.
 
-    Unread messages carry ``<span class="unread">`` around the title link; read
-    ones use a plain ``<span>``.
+    Each row is ``{date, title, sender, bbcode}`` where ``date`` is a timezone-aware
+    Pacific datetime. Only ``Folder == "Inbox"`` rows are returned. Message bodies
+    contain commas, quotes, and newlines, so this uses the csv module rather than
+    naive splitting.
     """
-    if not html:
+    if not text or not text.strip():
         return []
-    soup = BeautifulSoup(html, "html.parser")
-    ids: list[int] = []
-    for li in soup.find_all("li", class_="pmbit"):
-        title_span = li.find("span", class_="unread")
-        if not title_span:
+    rows: list[dict] = []
+    for raw in csv.DictReader(io.StringIO(text)):
+        if (raw.get("Folder") or "").strip() != "Inbox":
             continue
-        m = _PMID_RE.search(str(li.get("id", "")))
-        if m:
-            ids.append(int(m.group(1)))
-    return ids
+        date_str = (raw.get("Date") or "").strip()
+        try:
+            date = datetime.strptime(date_str, _CSV_DATE_FMT).replace(tzinfo=PACIFIC)
+        except ValueError:
+            log.warning("PM CSV: unparseable date %r; skipping row", date_str)
+            continue
+        rows.append({
+            "date": date,
+            "title": (raw.get("Title") or "").strip(),
+            "sender": (raw.get("From") or "").strip(),
+            "bbcode": raw.get("Message") or "",
+        })
+    return rows
 
 
-def parse_pm_detail(html: str) -> dict:
-    """Extract ``author``, ``subject``, and ``bbcode`` from a showpm page.
+def bbcode_to_text(text: str) -> str:
+    """Reduce a PM's BBCode body to clean plain text for a Discord code block.
 
-    The raw BBCode is read from MU's quick-reply textarea (already unescaped)
-    with the outer ``[QUOTE=author]...[/QUOTE]`` wrapper stripped.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-
-    author = ""
-    username = soup.select_one(".userinfo .username")
-    if username:
-        author = username.get_text(" ", strip=True)
-
-    subject = ""
-    title = soup.select_one("h2.title")
-    if title:
-        subject = title.get_text(" ", strip=True)
-    elif soup.title:
-        subject = soup.title.get_text(strip=True)
-
-    bbcode = ""
-    textarea = soup.find("textarea", {"name": "message"})
-    if textarea:
-        bbcode = textarea.get_text()
-        m = _OUTER_QUOTE_RE.match(bbcode)
-        if m:
-            bbcode = m.group(1)
-        bbcode = bbcode.strip()
-
-    return {"author": author, "subject": subject, "bbcode": bbcode}
-
-
-def bbcode_to_markdown(text: str) -> str:
-    """Convert the common BBCode tags seen in host PMs to light Discord markdown.
-
-    Bold/italic/underline map to their markdown equivalents; TITLE and BOX become
-    bold header lines; every other tag is stripped with its contents preserved.
+    Drops [QUOTE]/[QUOTE=Name] blocks entirely (on MU's export these hold the old
+    quoted conversation), then strips every remaining tag, keeping the visible
+    text. No markdown is produced — the result is shown verbatim in a code block.
     """
     if not text:
         return ""
 
-    # BOX=Label -> bold label header line, then contents.
+    # Drop quote blocks and their contents, innermost-first so nesting is handled.
+    quote_block = re.compile(r"\[QUOTE(?:=[^\]]*)?\](?:(?!\[QUOTE).)*?\[/QUOTE\]", re.S | re.I)
+    while quote_block.search(text):
+        text = quote_block.sub("", text)
+
+    # BOX=Label keeps its label as a plain heading line above the contents.
     text = re.sub(r"\[BOX=([^\]]*)\](.*?)\[/BOX\]",
-                  lambda m: f"\n**{m.group(1).strip()}**\n{m.group(2).strip()}\n",
-                  text, flags=re.S | re.I)
-    # TITLE (optionally TITLE=color) -> bold header line.
-    text = re.sub(r"\[TITLE(?:=[^\]]*)?\](.*?)\[/TITLE\]",
-                  lambda m: f"\n**{m.group(1).strip()}**\n",
+                  lambda m: f"\n{m.group(1).strip()}\n{m.group(2).strip()}\n",
                   text, flags=re.S | re.I)
 
-    text = re.sub(r"\[B\](.*?)\[/B\]", r"**\1**", text, flags=re.S | re.I)
-    text = re.sub(r"\[I\](.*?)\[/I\]", r"*\1*", text, flags=re.S | re.I)
-    text = re.sub(r"\[U\](.*?)\[/U\]", r"__\1__", text, flags=re.S | re.I)
-
-    # Strip any remaining tags (CENTER, QUOTE, COLOR, etc.), keeping contents.
+    # Strip all remaining tags (TITLE, CENTER, B, COLOR, ...), keeping contents.
     text = re.sub(r"\[/?[A-Za-z][^\]]*\]", "", text)
 
-    # Collapse runs of blank lines.
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    # Collapse whitespace-only lines and runs of blank lines left by removed blocks.
+    text = re.sub(r"\n[ \t]*\n[ \t\n]*", "\n\n", text)
     return text.strip()
 
 
-def format_pm_message(author: str, subject: str, bbcode: str) -> str:
-    """Build the Discord message for a forwarded PM, truncated to fit the limit."""
-    body = bbcode_to_markdown(bbcode)
-    header = f"**From:** {author}\n**Subject:** {subject}\n\n"
-    message = header + body
-    if len(message) > DISCORD_LIMIT:
-        marker = "\n… (truncated)"
-        message = message[: DISCORD_LIMIT - len(marker)] + marker
-    return message
+def format_pm_message(sender: str, title: str, bbcode: str) -> str:
+    """Build the Discord message for a forwarded PM, truncated to fit the limit.
+
+    Header is a single line (``From: X - Subject: Y``); the plain-text body follows
+    in a fenced code block. If the body is empty (e.g. the PM was only quoted text),
+    the code block is omitted.
+    """
+    header = f"**From:** {sender} - **Subject:** {title}"
+    body = bbcode_to_text(bbcode)
+    if not body:
+        return header
+
+    # Reserve room for the header, the code fences, and a possible truncation note.
+    fences = "\n```\n" + "{}" + "\n```"
+    marker = "\n… (truncated)"
+    overhead = len(header) + len(fences.format(""))
+    budget = DISCORD_LIMIT - overhead
+    if len(body) > budget:
+        body = body[: budget - len(marker)] + marker
+    return header + fences.format(body)
 
 
 class PMMonitor:
-    """Polls the MU PM inbox and forwards newly-arrived unread PMs to a channel.
+    """Polls the MU PM inbox (via the downloadpm CSV export) and forwards PMs that
+    arrived after monitoring started to a Discord channel.
 
-    State is in-process only: the destination channel, the set of pmids already
-    handled this session, and a forwarded counter. Nothing is persisted and MU's
-    read state is never changed. Starting captures the current unread pmids as a
-    silent baseline so the existing backlog is not forwarded.
+    "New" is decided by timestamp: ``start()`` records a UTC cutoff, and each tick
+    forwards Inbox rows whose (Pacific) date is at or after that cutoff. A small
+    seen-set keyed on (date, sender, title) prevents reposting the same row on
+    later ticks. Reading the CSV never opens individual PMs, so MU read/unread
+    state is left untouched. State is in-process only and not persisted.
     """
 
     def __init__(self, *, bot, mu_client, interval_seconds: int = 60):
         self.bot = bot
         self.mu_client = mu_client
         self.destination_channel_id: int | None = None
-        self.seen_pmids: set[int] = set()
+        self.cutoff: datetime | None = None
+        self.seen_keys: set[tuple] = set()
         self.forwarded_count = 0
         self._loop = tasks.loop(seconds=interval_seconds)(self._tick)
 
@@ -135,56 +127,50 @@ class PMMonitor:
             return "PM monitoring is **off**. Use `!monitor #channel` to start."
         return (
             f"PM monitoring is **on** → <#{self.destination_channel_id}>. "
-            f"Forwarded {self.forwarded_count} PM(s) this session."
+            f"Forwarded {self.forwarded_count} PM(s) since it started."
         )
 
     async def start(self, destination_channel_id: int) -> None:
-        """Set the destination, baseline current unread PMs, and start the loop."""
+        """Set the destination, record the cutoff time, and start the loop."""
         if self.is_running:
             self._loop.cancel()
         self.destination_channel_id = destination_channel_id
-        self.seen_pmids = set()
+        self.cutoff = datetime.now(timezone.utc)
+        self.seen_keys = set()
         self.forwarded_count = 0
-        try:
-            html = await asyncio.to_thread(self.mu_client.fetch_pm_inbox_page, 1)
-            self.seen_pmids = set(parse_unread_pmids(html))
-        except Exception:
-            log.exception("PMMonitor: failed to baseline inbox on start")
         self._loop.start()
 
     def stop(self) -> None:
         self._loop.cancel()
         self.destination_channel_id = None
-        self.seen_pmids = set()
+        self.cutoff = None
+        self.seen_keys = set()
 
     async def _tick(self) -> None:
         try:
-            html = await asyncio.to_thread(self.mu_client.fetch_pm_inbox_page, 1)
-            unread = parse_unread_pmids(html)
+            text = await asyncio.to_thread(self.mu_client.fetch_pm_csv)
+            rows = parse_pm_csv(text)
         except Exception:
-            log.exception("PMMonitor: failed to fetch/parse inbox page")
+            log.exception("PMMonitor: failed to fetch/parse PM CSV")
             return
 
         channel = self.bot.get_channel(self.destination_channel_id)
-        for pmid in unread:
-            if pmid in self.seen_pmids:
+        # Oldest-first so multiple new PMs post in chronological order.
+        for row in sorted(rows, key=lambda r: r["date"]):
+            if self.cutoff is not None and row["date"] < self.cutoff:
                 continue
-            try:
-                detail_html = await asyncio.to_thread(self.mu_client.fetch_pm, pmid)
-                detail = parse_pm_detail(detail_html)
-            except Exception:
-                log.exception("PMMonitor: failed to fetch/parse PM %s; skipping", pmid)
-                self.seen_pmids.add(pmid)  # don't retry a broken PM forever
+            key = (row["date"], row["sender"], row["title"])
+            if key in self.seen_keys:
                 continue
 
-            message = format_pm_message(detail["author"], detail["subject"], detail["bbcode"])
+            message = format_pm_message(row["sender"], row["title"], row["bbcode"])
             try:
                 if channel is None:
                     channel = self.bot.get_channel(self.destination_channel_id)
                 await channel.send(message)
             except Exception:
                 # Leave unseen so a transient Discord failure retries next tick.
-                log.exception("PMMonitor: failed to post PM %s to Discord", pmid)
+                log.exception("PMMonitor: failed to post PM to Discord (%s)", row["title"])
                 continue
-            self.seen_pmids.add(pmid)
+            self.seen_keys.add(key)
             self.forwarded_count += 1

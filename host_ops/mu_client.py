@@ -229,23 +229,17 @@ class MUClient:
         response.raise_for_status()
         return response.text
 
-    def fetch_pm_inbox_page(self, page: int | str = 1) -> str:
-        """Return the HTML of an inbox page (private.php?folderid=0)."""
-        self.login()
-        response = self._session.get(
-            f"{self.base_url}/private.php",
-            params={"folderid": 0, "pp": 50, "sort": "date", "page": page},
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        return response.text
+    def fetch_pm_csv(self) -> str:
+        """Return the CSV export of all private messages (private.php?do=downloadpm).
 
-    def fetch_pm(self, pmid: int | str) -> str:
-        """Return the HTML of a single private message (private.php?do=showpm)."""
+        The export includes every folder with full message bodies; callers filter
+        to the Inbox. Reading the export does not open individual PMs, so it does
+        not change read/unread state on MU.
+        """
         self.login()
         response = self._session.get(
             f"{self.base_url}/private.php",
-            params={"do": "showpm", "pmid": pmid},
+            params={"do": "downloadpm", "dowhat": "csv"},
             timeout=self.timeout,
         )
         response.raise_for_status()
