@@ -229,6 +229,28 @@ class MUClient:
         response.raise_for_status()
         return response.text
 
+    def fetch_pm_inbox_page(self, page: int | str = 1) -> str:
+        """Return the HTML of an inbox page (private.php?folderid=0)."""
+        self.login()
+        response = self._session.get(
+            f"{self.base_url}/private.php",
+            params={"folderid": 0, "pp": 50, "sort": "date", "page": page},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.text
+
+    def fetch_pm(self, pmid: int | str) -> str:
+        """Return the HTML of a single private message (private.php?do=showpm)."""
+        self.login()
+        response = self._session.get(
+            f"{self.base_url}/private.php",
+            params={"do": "showpm", "pmid": pmid},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.text
+
     def fetch_all_thread_posts(self, thread_id: int | str) -> list[dict]:
         """Return every post in a thread, in ascending order, across all pages.
 
