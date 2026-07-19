@@ -71,12 +71,12 @@ class SheetReader:
         return self.client
 
     def write_ita_settings(self, sheet_url_or_id: str, rows: list[dict]) -> None:
-        """Overwrite the ITA Settings tab with the given rows (list of dicts keyed by column name)."""
+        """Overwrite the Mashy ITA Settings tab with the given rows (list of dicts keyed by column name)."""
         spreadsheet = self._client().open_by_key(extract_sheet_id(sheet_url_or_id))
         try:
-            ws = spreadsheet.worksheet("ITA Settings")
+            ws = spreadsheet.worksheet("Mashy ITA Settings")
         except Exception:
-            ws = spreadsheet.add_worksheet("ITA Settings", rows=max(len(rows) + 5, 20), cols=15)
+            ws = spreadsheet.add_worksheet("Mashy ITA Settings", rows=max(len(rows) + 5, 20), cols=15)
         headers = ["phase", "player", "default_hit_pct", "hit_pct_override", "immune", "bonus", "penalty", "shots_allowed", "vulnerability", "shield_status", "bpv_status"]
         data = [headers] + [[str(row.get(h, "")) for h in headers] for row in rows]
         ws.clear()
@@ -84,22 +84,22 @@ class SheetReader:
 
     def load_game_state(self, sheet_url_or_id: str) -> GameState:
         spreadsheet = self._client().open_by_key(extract_sheet_id(sheet_url_or_id))
-        rows_by_tab = {name: spreadsheet.worksheet(name).get_all_records() for name in ("Players", "Protections", "ITA Settings")}
+        rows_by_tab = {name: spreadsheet.worksheet(name).get_all_records() for name in ("Mashy Players", "Mashy Protections", "Mashy ITA Settings")}
         return parse_game_state(rows_by_tab)
 
 
 def parse_game_state(rows_by_tab: dict[str, list[dict[str, Any]]]) -> GameState:
-    missing_tabs = [name for name in ("Players", "Protections", "ITA Settings") if name not in rows_by_tab]
+    missing_tabs = [name for name in ("Mashy Players", "Mashy Protections", "Mashy ITA Settings") if name not in rows_by_tab]
     if missing_tabs:
         raise SheetValidationError(f"Missing required tab(s): {', '.join(missing_tabs)}")
-    player_rows = rows_by_tab["Players"]
-    protection_rows = rows_by_tab["Protections"]
-    ita_rows = rows_by_tab["ITA Settings"]
-    validate_rows("Players", player_rows, PLAYER_COLUMNS)
+    player_rows = rows_by_tab["Mashy Players"]
+    protection_rows = rows_by_tab["Mashy Protections"]
+    ita_rows = rows_by_tab["Mashy ITA Settings"]
+    validate_rows("Mashy Players", player_rows, PLAYER_COLUMNS)
     if protection_rows:
-        validate_rows("Protections", protection_rows, PROTECTION_COLUMNS)
+        validate_rows("Mashy Protections", protection_rows, PROTECTION_COLUMNS)
     if ita_rows:
-        validate_rows("ITA Settings", ita_rows, ITA_COLUMNS)
+        validate_rows("Mashy ITA Settings", ita_rows, ITA_COLUMNS)
 
     players: list[Player] = []
     seen: set[str] = set()

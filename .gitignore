@@ -1,6 +1,10 @@
 # Local files
 *.MD
 
+# Standalone local scripts (not part of the repo)
+rolepm.py
+roles.xlsx
+
 # Secrets & credentials
 .env
 *.json

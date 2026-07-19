@@ -7,9 +7,9 @@ from host_ops.sheets import SheetValidationError, extract_sheet_id, parse_game_s
 
 def rows():
     return {
-        "Players": [{"player": "Alice", "mu_username": "alice_mu", "role_pm": "full", "redacted_role_pm": "red", "role_name": "Town Cop", "alive": "TRUE", "alignment": "town"}],
-        "Protections": [{"phase": "any", "target": "Alice", "protection_type": "doc", "source": "Doc", "uses": "1", "active": "yes", "blocks_events": "kill"}],
-        "ITA Settings": [{"phase": "any", "default_hit_pct": "50", "player": "", "hit_pct_override": "", "immune": "", "bonus": "0", "penalty": "0", "shots_allowed": "-1", "vulnerability": "0", "shield_status": "0", "bpv_status": "0"}],
+        "Mashy Players": [{"player": "Alice", "mu_username": "alice_mu", "role_pm": "full", "redacted_role_pm": "red", "role_name": "Town Cop", "alive": "TRUE", "alignment": "town"}],
+        "Mashy Protections": [{"phase": "any", "target": "Alice", "protection_type": "doc", "source": "Doc", "uses": "1", "active": "yes", "blocks_events": "kill"}],
+        "Mashy ITA Settings": [{"phase": "any", "default_hit_pct": "50", "player": "", "hit_pct_override": "", "immune": "", "bonus": "0", "penalty": "0", "shots_allowed": "-1", "vulnerability": "0", "shield_status": "0", "bpv_status": "0"}],
     }
 
 
@@ -26,20 +26,20 @@ def test_parse_game_state_success():
 
 def test_missing_required_tab_fails():
     data = rows()
-    del data["Players"]
+    del data["Mashy Players"]
     with pytest.raises(SheetValidationError):
         parse_game_state(data)
 
 
 def test_duplicate_player_fails():
     data = rows()
-    data["Players"].append(dict(data["Players"][0]))
+    data["Mashy Players"].append(dict(data["Mashy Players"][0]))
     with pytest.raises(SheetValidationError, match="Duplicate"):
         parse_game_state(data)
 
 
 def test_missing_redacted_pm_fails():
     data = rows()
-    data["Players"][0]["redacted_role_pm"] = ""
+    data["Mashy Players"][0]["redacted_role_pm"] = ""
     with pytest.raises(SheetValidationError, match="redacted"):
         parse_game_state(data)
