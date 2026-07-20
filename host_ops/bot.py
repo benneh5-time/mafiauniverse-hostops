@@ -9,7 +9,7 @@ from discord.ext import commands
 import csv
 from pathlib import Path
 
-from .commands import actions, host, info, monitor, rolepm, roles_export
+from .commands import actions, host, info, monitor, roll, rolepm, roles_export
 from .config import load_settings
 from .db import HostOpsDB
 from .mu_client import MUClient
@@ -51,6 +51,7 @@ def create_bot():
     info.register(bot, db=db, sheet_reader=sheet_reader)
     rolepm.register(bot, mu_user_ids=_mu_user_ids, mu_client=mu_client)
     roles_export.register(bot, mu_client=mu_client)
+    roll.register(bot)
 
     pm_monitor = PMMonitor(bot=bot, mu_client=mu_client, interval_seconds=settings.poll_interval_seconds)
     bot._host_ops_pm_monitor = pm_monitor
