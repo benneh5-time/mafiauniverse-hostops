@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 
 from host_ops.models import GameState, ITASettings, Player, Protection
-from host_ops.resolver import ResolutionError, resolve_bomb, resolve_death
+from host_ops.resolver import (
+    ResolutionError,
+    build_death_announcement,
+    resolve_bomb,
+    resolve_death,
+    threadmark_name,
+)
 
 
 def test_successful_kill(basic_state):
@@ -84,6 +90,59 @@ def test_bomb_announcement_has_bomb_header_and_both_deaths(basic_state):
     assert "Redacted Alice" in announcement
     assert "Redacted Bob" in announcement
     assert "Boom." in announcement
+
+
+def test_bomb_announcement_puts_reason_above_death_blocks(basic_state):
+    result = resolve_bomb(bomber_name="Alice", bombee_name="Bob", state=basic_state)
+    announcement = result.build_announcement(reason="Boom.")
+    assert announcement.index("A bomb goes off!") < announcement.index("Boom.") < announcement.index("Alice")
+
+
+def test_bomb_vest_announcement_puts_reason_above_death_block(basic_state):
+    result = resolve_bomb(bomber_name="Alice", bombee_name="Bob", state=basic_state)
+    announcement = result.build_announcement(reason="Boom.", vest=True)
+    assert announcement.index("Boom.") < announcement.index("Redacted Alice")
+    assert announcement.index("Boom.") < announcement.index("No one else has died.")
+
+
+def test_death_announcement_puts_reason_above_death_block(basic_state):
+    target = basic_state.players[0]
+    announcement = build_death_announcement(target, "dayvig", "He's dead to the gun!")
+    assert announcement.index("A shot rings out!") < announcement.index("He's dead to the gun!")
+    assert announcement.index("He's dead to the gun!") < announcement.index("has died")
+
+
+def test_kill_uses_sterile_header_distinct_from_dayvig(basic_state):
+    target = basic_state.players[0]
+    kill = build_death_announcement(target, "kill", "flavor")
+    dayvig = build_death_announcement(target, "dayvig", "flavor")
+    assert "A Player has died!" in kill
+    assert "A shot rings out!" not in kill
+    assert "A shot rings out!" in dayvig
+    assert threadmark_name(target, "kill").startswith("A Player has died!")
+
+
+def test_vest_pop_announcement_omits_reason(basic_state):
+    target = basic_state.players[0]
+    announcement = build_death_announcement(target, "kill", "He's dead to the gun!", vest=True)
+    assert "He's dead to the gun!" not in announcement
+    assert "No one has died." in announcement
+
+
+def test_kill_vest_pop_uses_ambiguous_header(basic_state):
+    target = basic_state.players[0]
+    announcement = build_death_announcement(target, "kill", "flavor", vest=True)
+    assert "Death?" in announcement
+    assert "A Player has died!" not in announcement
+    assert threadmark_name(target, "kill", vest=True).startswith("Death?")
+
+
+def test_vest_pop_header_change_is_scoped_to_kill(basic_state):
+    target = basic_state.players[0]
+    for event_type, header in (("dayvig", "A shot rings out!"), ("desperado", "A desperado shot rings out!")):
+        announcement = build_death_announcement(target, event_type, "flavor", vest=True)
+        assert header in announcement
+        assert "Death?" not in announcement
 
 
 def test_bomb_threadmark_name_mentions_both(basic_state):

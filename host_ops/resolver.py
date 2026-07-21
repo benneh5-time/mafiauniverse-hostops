@@ -95,32 +95,31 @@ def build_death_block(target: Player) -> str:
     return f"[B]{target.player}[/B] has died. [B]{target.player}[/B] was:\n\n[SPOILER]{target.redacted_role_pm}[/SPOILER]"
 
 
-def _death_header(event_type: str) -> str:
-    if event_type == "ita":
-        return "[CENTER][TITLE][B]An ITA hits![/B][/TITLE][/CENTER]"
-    if event_type == "desperado":
-        return "[CENTER][TITLE][B]A desperado shot rings out![/B][/TITLE][/CENTER]"
-    return "[CENTER][TITLE][B]A shot rings out![/B][/TITLE][/CENTER]"
-
-
-def _death_label(event_type: str) -> str:
+def _death_label(event_type: str, vest: bool = False) -> str:
     if event_type == "ita":
         return "An ITA hits!"
     if event_type == "desperado":
         return "A desperado shot rings out!"
+    if event_type == "kill":
+        # A popped vest is not a death, so the sterile kill header does not apply.
+        return "Death?" if vest else "A Player has died!"
     return "A shot rings out!"
 
 
+def _death_header(event_type: str, vest: bool = False) -> str:
+    return f"[CENTER][TITLE][B]{_death_label(event_type, vest)}[/B][/TITLE][/CENTER]"
+
+
 def build_death_announcement(target: Player, event_type: str, reason: str = "", vest: bool = False) -> str:
-    header = _death_header(event_type)
+    header = _death_header(event_type, vest)
     if vest:
         return f"{header}\n\n[B]No one has died.[/B]"
-    reason_text = f"\n\n{reason.strip()}" if reason and reason.strip() else ""
-    return f"{header}\n\n{build_death_block(target)}{reason_text}"
+    reason_text = f"{reason.strip()}\n\n" if reason and reason.strip() else ""
+    return f"{header}\n\n{reason_text}{build_death_block(target)}"
 
 
 def threadmark_name(target: Player, event_type: str, vest: bool = False) -> str:
-    label = _death_label(event_type)
+    label = _death_label(event_type, vest)
     if vest:
         return f"{label} No one has died."
     suffix = f", {target.role_name}" if target.role_name else ""

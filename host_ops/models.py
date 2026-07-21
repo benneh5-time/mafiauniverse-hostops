@@ -104,14 +104,14 @@ class BombResolveResult:
     def build_announcement(self, reason: str = "", vest: bool = False) -> str:
         from .resolver import build_death_block
 
-        reason_text = f"\n\n{reason.strip()}" if reason and reason.strip() else ""
+        reason_text = f"{reason.strip()}\n\n" if reason and reason.strip() else ""
         header = "[CENTER][TITLE][B]A bomb goes off![/B][/TITLE][/CENTER]"
         if vest:
             # bombee is vested: only the bomber dies (with reveal); the bombee survives
             # and is not named.
-            return f"{header}\n\n{build_death_block(self.bomber)}\n\n[B]BOOM! No one else has died.[/B]{reason_text}"
+            return f"{header}\n\n{reason_text}{build_death_block(self.bomber)}\n\n[B]BOOM! No one else has died.[/B]"
         blocks = "\n\n".join(build_death_block(p) for p in (self.bomber, self.bombee))
-        return f"{header}\n\n{blocks}{reason_text}"
+        return f"{header}\n\n{reason_text}{blocks}"
 
     def threadmark_name(self, vest: bool = False) -> str:
         if vest:
