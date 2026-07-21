@@ -356,6 +356,54 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
     return result, message
 
 
+async def reveal_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
+                        host_channel_id: int, target_name: str, post_link: str):
+    """Quote a post and reveal the target's role, killing in the local database only.
+
+    Never calls the MU kill API and never queries modbot death status, so it is safe
+    to run for a death that has already been applied on MU. Use ``!ita`` when the kill
+    still needs to be sent to MU.
+    """
+    cfg = db.get_active_game(host_channel_id)
+    if cfg is None:
+        return None, "No active game. Use `!use_game <name>` first."
+    try:
+        post_id = extract_post_id_from_link(post_link)
+    except ResolutionError as exc:
+        return None, str(exc)
+
+    state = sheet_reader.load_game_state(cfg.sheet_id)
+    dead = db.dead_players(cfg.host_channel_id, cfg.name)
+    for player in state.players:
+        if normalize_name(player.player) in dead:
+            player.alive = False
+    try:
+        target = resolve_player(target_name, state.players)
+    except ResolutionError as exc:
+        return None, str(exc)
+
+    mu_post_id = None
+    post_link = None
+    if live_mode:
+        quote_bbcode = await asyncio.to_thread(mu_client.fetch_quote_bbcode, cfg.thread_id, post_id)
+        announcement = build_ita_announcement(quote_bbcode, target)
+        shooter = extract_quote_author(quote_bbcode) or "Unknown"
+        reply, _tm = await asyncio.to_thread(
+            mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, ita_threadmark_name(shooter, target))
+        mu_post_id = reply.post_id
+        post_link = _post_link(reply, cfg.thread_id)
+
+    db.mark_dead(cfg.host_channel_id, cfg.name, target.player, "reveal")
+    db.log_event(cfg.host_channel_id, cfg.name, "reveal", target.player, "killed",
+                 dry_run=not live_mode, mu_post_id=mu_post_id, notes=f"quote post {post_id}")
+    prefix = "[DRY RUN] " if not live_mode else ""
+    await _send_log(bot, cfg, f"{prefix}**REVEAL** target={target.player} outcome=killed")
+    message = f"{prefix}Revealed {target.player} (local kill only — no MU kill sent)."
+    message += f"\n{post_link}" if post_link else ""
+    result = ResolveResult(True, target.player, "reveal", message, dry_run=not live_mode, announcement_post_id=mu_post_id)
+    return result, message
+
+
 async def ita_roll_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
                           host_channel_id: int, target_name: str, shooter: str | None, accuracy: float,
                           rng=random.random):
@@ -444,6 +492,17 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
         _result, message = await ita_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
                                             live_mode=live_mode, host_channel_id=ctx.channel.id,
                                             target_name=target, source=source or None, post_link=post_link, mode=mode)
+        await ctx.reply(message)
+
+    @bot.command(name="reveal")
+    async def reveal(ctx, *, args: str = ""):
+        target, post_link = parse_pipe_args(args, 2)
+        if not target or not post_link:
+            await ctx.reply("Usage: `!reveal <target> | <post link>`")
+            return
+        _result, message = await reveal_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
+                                               live_mode=live_mode, host_channel_id=ctx.channel.id,
+                                               target_name=target, post_link=post_link)
         await ctx.reply(message)
 
     @bot.command(name="resolve_ita")

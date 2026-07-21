@@ -7,7 +7,7 @@ import discord
 from discord.ext import commands
 
 from host_ops.commands import actions
-from host_ops.commands.actions import ita_action, ita_roll_action, parse_pipe_args, silent_ita_action
+from host_ops.commands.actions import ita_action, ita_roll_action, parse_pipe_args, reveal_action, silent_ita_action
 from host_ops.models import GameConfig
 
 
@@ -18,6 +18,7 @@ def test_ita_and_resolve_ita_commands_registered():
     names = {c.name for c in bot.commands}
     assert "ita" in names          # unchanged: quote-a-post, posts to thread
     assert "resolve_ita" in names  # new: roll-only accuracy command
+    assert "reveal" in names        # quote + reveal, local kill only
 
 
 class FakeSheetReader:
@@ -420,5 +421,108 @@ def test_ita_roll_no_active_game(db, basic_state):
     result, message = asyncio.run(ita_roll_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
         host_channel_id=10, target_name="Alice", shooter="Bob", accuracy=50.0))
+    assert result is None
+    assert "No active game" in message
+
+
+# ---- !reveal (quote + reveal, local kill only, never touches the MU API) ---
+
+REVEAL_LINK = "https://www.mafiauniverse.com/forums/threads/9/page5#post11042484"
+
+
+def _reveal_mu():
+    mu = MagicMock()
+    mu.fetch_quote_bbcode.return_value = "[QUOTE=Mashy;11042484]I shoot Alice[/QUOTE]"
+    mu.post_reply_with_threadmark.return_value = (
+        MagicMock(post_id="555", final_url="https://www.mafiauniverse.com/forums/threads/9?p=555#post555"),
+        MagicMock(),
+    )
+    return mu
+
+
+def test_reveal_quotes_and_posts_without_mu_kill(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = _reveal_mu()
+    result, message = asyncio.run(reveal_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", post_link=REVEAL_LINK))
+    assert result.success
+    assert mu.fetch_quote_bbcode.call_args.args[1] == "11042484"
+    # the whole point: no MU kill, no modbot status query
+    mu.kill.assert_not_called()
+    mu.fetch_player_statuses.assert_not_called()
+    announcement, threadmark = mu.post_reply_with_threadmark.call_args.args[1], mu.post_reply_with_threadmark.call_args.args[2]
+    assert announcement.startswith("[QUOTE=Mashy;11042484]I shoot Alice[/QUOTE]")
+    assert "[B]Hit![/B]" in announcement
+    assert threadmark == "In-Thread Attack: Mashy hit Alice"
+    assert db.is_dead(10, "g", "Alice")
+    assert "https://www.mafiauniverse.com/forums/threads/9?p=555#post555" in message
+
+
+def test_reveal_works_when_mu_already_shows_target_dead(db, basic_state):
+    """A reveal follows a death already applied on MU, so it must never abort."""
+    # game_id is set, so a modbot precheck would fire if !reveal did one
+    db.upsert_game(GameConfig("g", 123, "sheet", 10, log_channel_id=99, game_id=77, active=True))
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = _reveal_mu()
+    mu.fetch_player_statuses.return_value = {"alice_mu": False}
+    result, message = asyncio.run(reveal_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", post_link=REVEAL_LINK))
+    assert result is not None and result.success
+    mu.post_reply_with_threadmark.assert_called_once()
+    mu.kill.assert_not_called()
+    assert "aborted" not in message.lower()
+    assert db.is_dead(10, "g", "Alice")
+
+
+def test_reveal_dry_run_marks_dead_without_posting(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = _reveal_mu()
+    result, _msg = asyncio.run(reveal_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=False,
+        host_channel_id=10, target_name="Alice", post_link=REVEAL_LINK))
+    assert result.success
+    mu.kill.assert_not_called()
+    mu.post_reply_with_threadmark.assert_not_called()
+    assert db.is_dead(10, "g", "Alice")
+
+
+def test_reveal_bad_link_returns_error_no_mu(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    mu = _reveal_mu()
+    result, message = asyncio.run(reveal_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice",
+        post_link="https://www.mafiauniverse.com/forums/threads/9/"))
+    assert result is None
+    assert "post id" in message.lower()
+    mu.fetch_quote_bbcode.assert_not_called()
+
+
+def test_reveal_unknown_player(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    mu = _reveal_mu()
+    result, message = asyncio.run(reveal_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Nobody", post_link=REVEAL_LINK))
+    assert result is None
+    assert "unknown player" in message.lower()
+    mu.post_reply_with_threadmark.assert_not_called()
+
+
+def test_reveal_no_active_game(db, basic_state):
+    bot = MagicMock()
+    mu = _reveal_mu()
+    result, message = asyncio.run(reveal_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", post_link=REVEAL_LINK))
     assert result is None
     assert "No active game" in message
