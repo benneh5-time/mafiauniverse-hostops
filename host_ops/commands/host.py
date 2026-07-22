@@ -120,7 +120,7 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
                 "immunity": 100 if ita.immune else 0,
                 "booster": ita.bonus,
                 "nerfer": ita.penalty,
-                "count": ita.shots_allowed if ita.shots_allowed > 0 else 1,
+                "count": ita.shots_allowed if ita.shots_allowed >= 0 else 1,
                 "vulnerability": ita.vulnerability,
                 "shield_status": ita.shield_status,
                 "bpv_status": ita.bpv_status,
