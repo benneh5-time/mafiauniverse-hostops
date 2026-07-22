@@ -9,9 +9,11 @@ from ..mu_client import MUClient
 from ..resolver import (
     ResolutionError,
     build_death_announcement,
+    build_elim_announcement,
     build_ita_announcement,
     build_silent_ita_announcement,
     bpv_warning,
+    elim_threadmark_name,
     extract_post_id_from_link,
     extract_quote_author,
     ita_protection_warning,
@@ -404,6 +406,46 @@ async def reveal_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_cli
     return result, message
 
 
+async def elim_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
+                      host_channel_id: int, target_name: str, day: str, reason: str = ""):
+    """Post day-elimination results and mark the target dead in the local database only.
+
+    Never calls the MU kill API. Eliminations are a host action, so the flip is applied
+    manually on MU; this just posts the results and reveal.
+    """
+    cfg = db.get_active_game(host_channel_id)
+    if cfg is None:
+        return None, "No active game. Use `!use_game <name>` first."
+    state = sheet_reader.load_game_state(cfg.sheet_id)
+    dead = db.dead_players(cfg.host_channel_id, cfg.name)
+    for player in state.players:
+        if normalize_name(player.player) in dead:
+            player.alive = False
+    try:
+        target = resolve_player(target_name, state.players)
+    except ResolutionError as exc:
+        return None, str(exc)
+
+    mu_post_id = None
+    post_link = None
+    if live_mode:
+        announcement = build_elim_announcement(target, day, reason)
+        reply, _tm = await asyncio.to_thread(
+            mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, elim_threadmark_name(target, day))
+        mu_post_id = reply.post_id
+        post_link = _post_link(reply, cfg.thread_id)
+
+    db.mark_dead(cfg.host_channel_id, cfg.name, target.player, "elim")
+    db.log_event(cfg.host_channel_id, cfg.name, "elim", target.player, "eliminated",
+                 dry_run=not live_mode, mu_post_id=mu_post_id, notes=(reason or None))
+    prefix = "[DRY RUN] " if not live_mode else ""
+    await _send_log(bot, cfg, f"{prefix}**ELIM** target={target.player} day={day}")
+    message = f"{prefix}Day {day} elimination: {target.player} (local kill only — no MU kill sent)."
+    message += f"\n{post_link}" if post_link else ""
+    result = ResolveResult(True, target.player, "elim", message, dry_run=not live_mode, announcement_post_id=mu_post_id)
+    return result, message
+
+
 async def ita_roll_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
                           host_channel_id: int, target_name: str, shooter: str | None, accuracy: float,
                           rng=random.random):
@@ -492,6 +534,17 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
         _result, message = await ita_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
                                             live_mode=live_mode, host_channel_id=ctx.channel.id,
                                             target_name=target, source=source or None, post_link=post_link, mode=mode)
+        await ctx.reply(message)
+
+    @bot.command(name="elim")
+    async def elim(ctx, *, args: str = ""):
+        target, reason, day = parse_pipe_args(args, 3)
+        if not target or not day:
+            await ctx.reply("Usage: `!elim <target> | <reason> | <day#>`")
+            return
+        _result, message = await elim_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
+                                             live_mode=live_mode, host_channel_id=ctx.channel.id,
+                                             target_name=target, day=day, reason=reason)
         await ctx.reply(message)
 
     @bot.command(name="reveal")

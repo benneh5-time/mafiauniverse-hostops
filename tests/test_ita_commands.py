@@ -7,7 +7,7 @@ import discord
 from discord.ext import commands
 
 from host_ops.commands import actions
-from host_ops.commands.actions import ita_action, ita_roll_action, parse_pipe_args, reveal_action, silent_ita_action
+from host_ops.commands.actions import elim_action, ita_action, ita_roll_action, parse_pipe_args, reveal_action, silent_ita_action
 from host_ops.models import GameConfig
 
 
@@ -19,6 +19,7 @@ def test_ita_and_resolve_ita_commands_registered():
     assert "ita" in names          # unchanged: quote-a-post, posts to thread
     assert "resolve_ita" in names  # new: roll-only accuracy command
     assert "reveal" in names        # quote + reveal, local kill only
+    assert "elim" in names          # day elimination results, local kill only
 
 
 class FakeSheetReader:
@@ -526,3 +527,38 @@ def test_reveal_no_active_game(db, basic_state):
         host_channel_id=10, target_name="Alice", post_link=REVEAL_LINK))
     assert result is None
     assert "No active game" in message
+
+
+# ---- !elim (day elimination results, local kill only) ---------------------
+
+def test_elim_posts_results_and_kills_locally(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    mu.post_reply_with_threadmark.return_value = (
+        MagicMock(post_id="555", final_url="https://mu/threads/1?p=555#post555"), MagicMock())
+    result, message = asyncio.run(elim_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", day="3", reason="The town has spoken."))
+    assert result.success
+    mu.kill.assert_not_called()
+    announcement, threadmark = mu.post_reply_with_threadmark.call_args.args[1], mu.post_reply_with_threadmark.call_args.args[2]
+    assert "[B]Day 3 Elimination results[/B]" in announcement
+    assert "The town has spoken." in announcement
+    assert "[B]Alice[/B] was eliminated." in announcement
+    assert threadmark.startswith("Day 3 Elimination: Alice was eliminated")
+    assert db.is_dead(10, "g", "Alice")
+
+
+def test_elim_dry_run_marks_dead_without_posting(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    result, _msg = asyncio.run(elim_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=False,
+        host_channel_id=10, target_name="Alice", day="1", reason=""))
+    assert result.success
+    mu.post_reply_with_threadmark.assert_not_called()
+    assert db.is_dead(10, "g", "Alice")

@@ -95,6 +95,21 @@ def build_death_block(target: Player) -> str:
     return f"[B]{target.player}[/B] has died. [B]{target.player}[/B] was:\n\n[SPOILER]{target.redacted_role_pm}[/SPOILER]"
 
 
+def build_elim_block(target: Player) -> str:
+    return f"[B]{target.player}[/B] was eliminated. [B]{target.player}[/B] was:\n\n[SPOILER]{target.redacted_role_pm}[/SPOILER]"
+
+
+def build_elim_announcement(target: Player, day: str, reason: str = "") -> str:
+    header = f"[CENTER][TITLE][B]Day {day} Elimination results[/B][/TITLE][/CENTER]"
+    reason_text = f"{reason.strip()}\n\n" if reason and reason.strip() else ""
+    return f"{header}\n\n{reason_text}{build_elim_block(target)}"
+
+
+def elim_threadmark_name(target: Player, day: str) -> str:
+    suffix = f", {target.role_name}" if target.role_name else ""
+    return f"Day {day} Elimination: {target.player} was eliminated{suffix}"
+
+
 def _death_label(event_type: str, vest: bool = False) -> str:
     if event_type == "ita":
         return "An ITA hits!"
