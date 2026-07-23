@@ -81,13 +81,12 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
             if player is None:
                 unmatched.append(row["username"])
                 continue
-            immune_val = str(row["immunity"]) == "100"
             sheet_rows.append({
                 "phase": "any",
                 "player": player.player,
                 "default_hit_pct": row["base_hit"],
                 "hit_pct_override": "",
-                "immune": "true" if immune_val else "false",
+                "immune": row["immunity"],
                 "bonus": row["booster"],
                 "penalty": row["nerfer"],
                 "shots_allowed": row["count"],
@@ -117,7 +116,7 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
             base_hit = ita.hit_pct_override if ita.hit_pct_override is not None else ita.default_hit_pct
             settings_by_username[player.mu_username.lower()] = {
                 "base_hit": base_hit,
-                "immunity": 100 if ita.immune else 0,
+                "immunity": ita.immune,
                 "booster": ita.bonus,
                 "nerfer": ita.penalty,
                 "count": ita.shots_allowed if ita.shots_allowed >= 0 else 1,

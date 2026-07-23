@@ -28,6 +28,22 @@ def _truthy(value: Any, default: bool = False) -> bool:
     return str(value).strip().casefold() in {"1", "true", "yes", "y", "on", "alive"}
 
 
+def _immunity(value: Any, default: int = 0) -> int:
+    """Parse ITA immunity as a 0-100 percentage.
+
+    MU's ``ita_immunity[]`` is numeric, but this column used to be a boolean, so
+    legacy ``true``/``yes`` cells still map to full (100%) immunity.
+    """
+    if value is None or str(value).strip() == "":
+        return default
+    text = str(value).strip()
+    if text.casefold() in {"true", "yes", "y", "on"}:
+        return 100
+    if text.casefold() in {"false", "no", "n", "off"}:
+        return 0
+    return max(0, min(100, int(float(text))))
+
+
 def _int(value: Any, default: int = -1) -> int:
     if value is None or str(value).strip() == "":
         return default
@@ -118,5 +134,5 @@ def parse_game_state(rows_by_tab: dict[str, list[dict[str, Any]]]) -> GameState:
         players.append(Player(name, str(row.get("mu_username", "")).strip() or name, str(row.get("role_pm", "")).strip(), redacted, _truthy(row.get("alive"), True), str(row.get("alignment", "")).strip(), str(row.get("role_name", "")).strip(), str(row.get("notes", "")).strip(), str(row.get("flavor", "")).strip()))
 
     protections = [Protection(str(row.get("phase", "any")).strip() or "any", str(row.get("target", "")).strip(), str(row.get("protection_type", "")).strip(), str(row.get("source", "")).strip(), _int(row.get("uses"), -1), _truthy(row.get("active"), True), str(row.get("blocks_events", "any")).strip() or "any", str(row.get("notes", "")).strip()) for row in (_norm_row(r) for r in protection_rows) if str(row.get("target", "")).strip()]
-    ita_settings = [ITASettings(str(row.get("phase", "any")).strip() or "any", _float(row.get("default_hit_pct"), 0.0), str(row.get("player", "")).strip(), _float_or_none(row.get("hit_pct_override")), _truthy(row.get("immune"), False), _float(row.get("bonus"), 0.0), _float(row.get("penalty"), 0.0), _int(row.get("shots_allowed"), -1), _int(row.get("vulnerability"), 0), _int(row.get("shield_status"), 0), _int(row.get("bpv_status"), 0)) for row in (_norm_row(r) for r in ita_rows)]
+    ita_settings = [ITASettings(str(row.get("phase", "any")).strip() or "any", _float(row.get("default_hit_pct"), 0.0), str(row.get("player", "")).strip(), _float_or_none(row.get("hit_pct_override")), _immunity(row.get("immune"), 0), _float(row.get("bonus"), 0.0), _float(row.get("penalty"), 0.0), _int(row.get("shots_allowed"), -1), _int(row.get("vulnerability"), 0), _int(row.get("shield_status"), 0), _int(row.get("bpv_status"), 0)) for row in (_norm_row(r) for r in ita_rows)]
     return GameState(players, protections, ita_settings)

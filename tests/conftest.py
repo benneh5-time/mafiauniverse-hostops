@@ -27,5 +27,5 @@ def basic_state():
     return GameState(
         players=[Player("Alice", "alice_mu", "PM", "Redacted Alice", True, "town"), Player("Bob", "bob_mu", "PM", "Redacted Bob", True, "mafia")],
         protections=[],
-        ita_settings=[ITASettings(phase="any", default_hit_pct=50.0, player="", hit_pct_override=None, immune=False)],
+        ita_settings=[ITASettings(phase="any", default_hit_pct=50.0, player="", hit_pct_override=None, immune=0)],
     )

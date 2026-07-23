@@ -84,11 +84,19 @@ def bpv_warning(target: Player, state: GameState, phase: str = "any") -> str | N
 
 
 def ita_hit_pct(target: Player, phase: str, settings: list[ITASettings]) -> tuple[float, bool]:
+    """Returns (effective hit %, fully immune).
+
+    ``immune`` is a 0-100 percentage matching MU's ``ita_immunity[]``. 100 blocks the
+    shot outright; a partial value scales the hit chance down proportionally.
+    """
     chosen = choose_ita_settings(target, phase, settings)
-    if chosen.immune:
+    if chosen.immune >= 100:
         return 0.0, True
     base = chosen.hit_pct_override if chosen.hit_pct_override is not None else chosen.default_hit_pct
-    return max(0.0, min(100.0, base + chosen.bonus - chosen.penalty)), False
+    effective = base + chosen.bonus - chosen.penalty
+    if chosen.immune > 0:
+        effective *= (100 - chosen.immune) / 100
+    return max(0.0, min(100.0, effective)), False
 
 
 def build_death_block(target: Player) -> str:

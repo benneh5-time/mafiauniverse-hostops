@@ -7,6 +7,7 @@ from host_ops.resolver import (
     ResolutionError,
     build_death_announcement,
     elim_threadmark_name,
+    ita_hit_pct,
     resolve_bomb,
     resolve_death,
     threadmark_name,
@@ -38,10 +39,18 @@ def test_ita_hit_and_miss(basic_state):
 
 
 def test_ita_immune_target():
-    state = GameState(players=[Player("Bob", "bob_mu", redacted_role_pm="r")], protections=[], ita_settings=[ITASettings("any", 50.0, "Bob", None, True)])
+    state = GameState(players=[Player("Bob", "bob_mu", redacted_role_pm="r")], protections=[], ita_settings=[ITASettings("any", 50.0, "Bob", None, 100)])
     result = resolve_death(target_name="Bob", event_type="ita", phase="any", state=state)
     assert not result.success
     assert result.blocked_by == "ITA immune"
+
+
+def test_ita_partial_immunity_scales_hit_pct():
+    # 50% base hit with 40% immunity -> 30% effective, not a hard block.
+    state = GameState(players=[Player("Bob", "bob_mu", redacted_role_pm="r")], protections=[], ita_settings=[ITASettings("any", 50.0, "Bob", None, 40)])
+    hit_pct, immune = ita_hit_pct(state.players[0], "any", state.ita_settings)
+    assert not immune
+    assert hit_pct == pytest.approx(30.0)
 
 
 def test_player_specific_override():

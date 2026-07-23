@@ -25,7 +25,7 @@ def state():
         ],
         protections=[],
         # Sheet ITA settings should be IGNORED by silent ITA; make them wildly different.
-        ita_settings=[ITASettings(phase="any", default_hit_pct=100.0, player="", immune=True)],
+        ita_settings=[ITASettings(phase="any", default_hit_pct=100.0, player="", immune=100)],
     )
 
 

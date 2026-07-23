@@ -61,7 +61,7 @@ class ITASettings:
     default_hit_pct: float = 0.0
     player: str = ""
     hit_pct_override: float | None = None
-    immune: bool = False
+    immune: int = 0
     bonus: float = 0.0
     penalty: float = 0.0
     shots_allowed: int = -1
