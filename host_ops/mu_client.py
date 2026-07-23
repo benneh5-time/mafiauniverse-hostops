@@ -22,6 +22,13 @@ TOKEN_FALLBACK_RE = re.compile(
 )
 GAME_ID_RE = re.compile(r"game_id[=\/](\d+)")
 
+# vBulletin's rejection message when a POST carries a stale/invalid security token.
+TOKEN_REJECTED_RE = re.compile(r"security token (?:was )?(?:missing|invalid|expired)", re.I)
+
+
+def token_rejected(text: str | None) -> bool:
+    return bool(text and TOKEN_REJECTED_RE.search(text))
+
 
 class MUClientError(RuntimeError):
     pass
@@ -142,6 +149,8 @@ class MUClient:
             log.info("MU login succeeded as %s (userid=%s)", self.username, bb_userid)
         else:
             log.warning("MU login failed for %s - cookies: %s - response snippet: %r", self.username, list(cookies.keys()), response.text[200:600])
+        # A fresh login invalidates any token issued under the previous session.
+        self._security_token = None
         return response
 
     def refresh_token(self, thread_id: int | str) -> str:
@@ -154,6 +163,11 @@ class MUClient:
         return token
 
     def token(self, thread_id: int | str) -> str:
+        # Tokens are per-session, not per-page-load, so reuse the cached one
+        # instead of re-downloading the thread page on every call. Callers
+        # retry with refresh_token() if MU rejects the cached token.
+        if self._security_token and self._security_token != "guest":
+            return self._security_token
         return self.refresh_token(thread_id)
 
     def revive(self, thread_id: int | str, mu_username: str) -> dict:
@@ -183,6 +197,11 @@ class MUClient:
         if not token or token == "guest":
             raise MUClientError("Security token is 'guest' - session is not authenticated, cannot post reply")
         result = mu_api.post_reply(self._session, thread_id, token, message)
+        if token_rejected(result.text):
+            # Cached token went stale; a rejected post is never published, so retrying is safe.
+            log.info("post_reply: security token rejected, refreshing and retrying once")
+            token = self.refresh_token(thread_id)
+            result = mu_api.post_reply(self._session, thread_id, token, message)
         if result.status_code >= 400:
             raise MUClientError(f"MU post reply failed with status {result.status_code}")
         return PostedReply(result.text, result.status_code, result.final_url, result.post_id)
@@ -190,6 +209,10 @@ class MUClient:
     def set_threadmark(self, thread_id: int | str, post_id: str, name: str, postnumber: str = "1") -> Any:
         token = self.token(thread_id)
         response = mu_api.set_threadmark(self._session, thread_id, token, post_id, name, postnumber=postnumber)
+        if token_rejected(response.text):
+            log.info("set_threadmark: security token rejected, refreshing and retrying once")
+            token = self.refresh_token(thread_id)
+            response = mu_api.set_threadmark(self._session, thread_id, token, post_id, name, postnumber=postnumber)
         response.raise_for_status()
         return response
 
@@ -217,6 +240,15 @@ class MUClient:
             data={"do": "getquotes", "p": str(post_id), "securitytoken": token},
             timeout=self.timeout,
         )
+        if token_rejected(response.text):
+            log.info("fetch_quote_bbcode: security token rejected, refreshing and retrying once")
+            token = self.refresh_token(thread_id)
+            response = self._session.post(
+                f"{self.base_url}/ajax.php",
+                params={"do": "getquotes", "p": str(post_id)},
+                data={"do": "getquotes", "p": str(post_id), "securitytoken": token},
+                timeout=self.timeout,
+            )
         if response.status_code >= 400:
             raise MUClientError(f"MU getquotes failed with status {response.status_code} for post {post_id}")
         bbcode = _parse_getquotes(response.text)

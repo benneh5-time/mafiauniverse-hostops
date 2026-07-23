@@ -75,6 +75,50 @@ def test_refresh_token_missing_raises():
         client.refresh_token(123)
 
 
+def test_token_is_cached_across_calls():
+    session = MagicMock()
+    session.get.return_value = FakeResponse(text='var SECURITYTOKEN = "tok";')
+    client = MUClient("u", "p", session=session)
+    assert client.token(123) == "tok"
+    assert client.token(123) == "tok"
+    session.get.assert_called_once()  # second call served from cache, no thread GET
+
+
+def test_login_post_clears_cached_token():
+    session = MagicMock()
+    session.get.return_value = FakeResponse(text='var SECURITYTOKEN = "old";')
+    session.post.return_value = FakeResponse()
+    session.cookies = []
+    client = MUClient("u", "p", session=session)
+    client.token(123)
+    client.login(force=True)
+    assert client._security_token is None
+
+
+TOKEN_REJECTED_HTML = "Your submission could not be processed because a security token was missing."
+
+
+def test_post_reply_retries_once_on_rejected_token():
+    import requests
+
+    session = requests.Session()
+    session.cookies.set("bb_userid", "4242")
+    session.get = MagicMock(return_value=FakeResponse(text='var SECURITYTOKEN = "tok2";'))
+    session.post = MagicMock(side_effect=[
+        FakeResponse(text=TOKEN_REJECTED_HTML),
+        FakeResponse(url="https://mu/threads/1?p=55#post55", text="ok"),
+    ])
+    client = MUClient("u", "p", session=session)
+    client._security_token = "stale"
+
+    reply = client.post_reply(1, "body")
+
+    assert reply.post_id == "55"
+    assert session.post.call_count == 2
+    assert session.post.call_args.kwargs["data"]["securitytoken"] == "tok2"
+    session.get.assert_called_once()  # exactly one token refresh triggered by the rejection
+
+
 def test_kill_api_get_params():
     session = MagicMock()
     session.get.return_value = FakeResponse(payload={"success": True})
