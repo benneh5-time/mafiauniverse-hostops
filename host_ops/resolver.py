@@ -106,7 +106,7 @@ def build_elim_announcement(target: Player, day: str, reason: str = "") -> str:
 
 
 def elim_threadmark_name(target: Player, day: str) -> str:
-    suffix = f", {target.role_name}" if target.role_name else ""
+    suffix = f", {target.flip_name}" if target.flip_name else ""
     return f"Day {day} Elimination: {target.player} was eliminated{suffix}"
 
 
@@ -137,7 +137,7 @@ def threadmark_name(target: Player, event_type: str, vest: bool = False) -> str:
     label = _death_label(event_type, vest)
     if vest:
         return f"{label} No one has died."
-    suffix = f", {target.role_name}" if target.role_name else ""
+    suffix = f", {target.flip_name}" if target.flip_name else ""
     return f"{label} {target.player} is dead{suffix}"
 
 
@@ -208,7 +208,7 @@ def silent_ita_threadmark_name(target: Player, hit: bool, vest: bool = False) ->
         return "A Silent Shot Rings Out! Miss"
     if vest:
         return "A Silent Shot Rings Out! Hit! No one has died."
-    role = f" and was {target.role_name}" if target.role_name else ""
+    role = f" and was {target.flip_name}" if target.flip_name else ""
     return f"A Silent Shot Rings Out! {target.player} was hit{role}"
 
 
@@ -244,5 +244,5 @@ def extract_quote_author(quote_bbcode: str) -> str | None:
 def ita_threadmark_name(shooter: str, target: Player, vest: bool = False) -> str:
     if vest:
         return "Hit! No one has died."
-    role = f" who was {target.role_name}" if target.role_name else ""
+    role = f" who was {target.flip_name}" if target.flip_name else ""
     return f"In-Thread Attack: {shooter} hit {target.player}{role}"

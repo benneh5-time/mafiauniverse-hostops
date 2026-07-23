@@ -88,6 +88,12 @@ def test_silent_ita_threadmark_hit_names_target_and_role():
     assert name == "A Silent Shot Rings Out! Alice was hit and was Cop"
 
 
+def test_silent_ita_threadmark_hit_includes_flavor_before_role():
+    target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop", flavor="Nosy Neighbor")
+    name = silent_ita_threadmark_name(target, hit=True)
+    assert name == "A Silent Shot Rings Out! Alice was hit and was Nosy Neighbor, Cop"
+
+
 def test_silent_ita_threadmark_hit_without_role():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="")
     name = silent_ita_threadmark_name(target, hit=True)
@@ -220,6 +226,16 @@ def test_extract_quote_author_missing_returns_none():
 def test_ita_threadmark_uses_shooter_target_and_role():
     target = Player("gamer", "gamer_mu", "PM", "Redacted", role_name="Cop")
     assert ita_threadmark_name("Mashy", target) == "In-Thread Attack: Mashy hit gamer who was Cop"
+
+
+def test_ita_threadmark_includes_flavor_before_role_name():
+    target = Player("gamer", "gamer_mu", "PM", "Redacted", role_name="Cop", flavor="Nosy Neighbor")
+    assert ita_threadmark_name("Mashy", target) == "In-Thread Attack: Mashy hit gamer who was Nosy Neighbor, Cop"
+
+
+def test_ita_threadmark_flavor_only():
+    target = Player("gamer", "gamer_mu", "PM", "Redacted", role_name="", flavor="Nosy Neighbor")
+    assert ita_threadmark_name("Mashy", target) == "In-Thread Attack: Mashy hit gamer who was Nosy Neighbor"
 
 
 def test_ita_threadmark_without_role_name():

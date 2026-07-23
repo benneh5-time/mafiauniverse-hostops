@@ -19,10 +19,16 @@ class Player:
     alignment: str = ""
     role_name: str = ""
     notes: str = ""
+    flavor: str = ""
 
     @property
     def key(self) -> str:
         return normalize_name(self.player)
+
+    @property
+    def flip_name(self) -> str:
+        """Role as revealed on a flip: ``<flavor>, <role_name>``, or whichever half exists."""
+        return ", ".join(part for part in (self.flavor.strip(), self.role_name.strip()) if part)
 
 
 @dataclass(slots=True)

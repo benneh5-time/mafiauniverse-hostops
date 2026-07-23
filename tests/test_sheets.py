@@ -24,6 +24,15 @@ def test_parse_game_state_success():
     assert state.ita_settings[0].default_hit_pct == 50
 
 
+def test_flavor_column_is_optional_and_parsed():
+    assert parse_game_state(rows()).players[0].flavor == ""
+    data = rows()
+    data["Mashy Players"][0]["flavor"] = "Nosy Neighbor"
+    player = parse_game_state(data).players[0]
+    assert player.flavor == "Nosy Neighbor"
+    assert player.flip_name == "Nosy Neighbor, Town Cop"
+
+
 def test_missing_required_tab_fails():
     data = rows()
     del data["Mashy Players"]

@@ -115,7 +115,7 @@ def parse_game_state(rows_by_tab: dict[str, list[dict[str, Any]]]) -> GameState:
         redacted = str(row.get("redacted_role_pm", "")).strip()
         if not redacted:
             raise SheetValidationError(f"Missing redacted_role_pm for {name}")
-        players.append(Player(name, str(row.get("mu_username", "")).strip() or name, str(row.get("role_pm", "")).strip(), redacted, _truthy(row.get("alive"), True), str(row.get("alignment", "")).strip(), str(row.get("role_name", "")).strip(), str(row.get("notes", "")).strip()))
+        players.append(Player(name, str(row.get("mu_username", "")).strip() or name, str(row.get("role_pm", "")).strip(), redacted, _truthy(row.get("alive"), True), str(row.get("alignment", "")).strip(), str(row.get("role_name", "")).strip(), str(row.get("notes", "")).strip(), str(row.get("flavor", "")).strip()))
 
     protections = [Protection(str(row.get("phase", "any")).strip() or "any", str(row.get("target", "")).strip(), str(row.get("protection_type", "")).strip(), str(row.get("source", "")).strip(), _int(row.get("uses"), -1), _truthy(row.get("active"), True), str(row.get("blocks_events", "any")).strip() or "any", str(row.get("notes", "")).strip()) for row in (_norm_row(r) for r in protection_rows) if str(row.get("target", "")).strip()]
     ita_settings = [ITASettings(str(row.get("phase", "any")).strip() or "any", _float(row.get("default_hit_pct"), 0.0), str(row.get("player", "")).strip(), _float_or_none(row.get("hit_pct_override")), _truthy(row.get("immune"), False), _float(row.get("bonus"), 0.0), _float(row.get("penalty"), 0.0), _int(row.get("shots_allowed"), -1), _int(row.get("vulnerability"), 0), _int(row.get("shield_status"), 0), _int(row.get("bpv_status"), 0)) for row in (_norm_row(r) for r in ita_rows)]

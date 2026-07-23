@@ -6,6 +6,7 @@ from host_ops.models import GameState, ITASettings, Player, Protection
 from host_ops.resolver import (
     ResolutionError,
     build_death_announcement,
+    elim_threadmark_name,
     resolve_bomb,
     resolve_death,
     threadmark_name,
@@ -120,6 +121,16 @@ def test_kill_uses_sterile_header_distinct_from_dayvig(basic_state):
     assert "A shot rings out!" not in kill
     assert "A shot rings out!" in dayvig
     assert threadmark_name(target, "kill").startswith("A Player has died!")
+
+
+def test_death_threadmark_includes_flavor_before_role_name():
+    target = Player("Alice", "alice_mu", "PM", "Redacted", role_name="Cop", flavor="Nosy Neighbor")
+    assert threadmark_name(target, "kill") == "A Player has died! Alice is dead, Nosy Neighbor, Cop"
+
+
+def test_elim_threadmark_includes_flavor_before_role_name():
+    target = Player("Alice", "alice_mu", "PM", "Redacted", role_name="Cop", flavor="Nosy Neighbor")
+    assert elim_threadmark_name(target, "2") == "Day 2 Elimination: Alice was eliminated, Nosy Neighbor, Cop"
 
 
 def test_vest_pop_announcement_omits_reason(basic_state):
