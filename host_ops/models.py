@@ -20,6 +20,13 @@ class Player:
     role_name: str = ""
     notes: str = ""
     flavor: str = ""
+    # MU deaths-page fields. ``mu_role_name`` mirrors MU's role name and is
+    # kept separate from the host-authored ``role_name`` above; blank means
+    # "inherit MU's current value" on push.
+    mu_role_name: str = ""
+    faction: str = ""
+    faction_color: str = ""
+    rolepm_verified: bool = False
 
     @property
     def key(self) -> str:

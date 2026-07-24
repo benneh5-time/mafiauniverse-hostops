@@ -6,7 +6,7 @@ from ..db import HostOpsDB
 from ..models import GameConfig
 from ..mu_client import MUClient
 from ..resolver import choose_ita_settings
-from ..sheets import SheetReader, extract_sheet_id
+from ..sheets import SheetReader, extract_sheet_id, normalize_alignment, normalize_hex_color
 
 
 def _channel_id_from_arg(ctx, channel_arg: str | None) -> int:
@@ -127,3 +127,66 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
         matched = await asyncio.to_thread(mu_client.push_ita_settings, cfg.game_id, settings_by_username)
         total = len(state.players)
         await ctx.reply(f"ITA settings pushed: {matched}/{total} players matched on MU.")
+
+    @bot.command(name="pull_players")
+    async def pull_players(ctx):
+        cfg = db.get_active_game(ctx.channel.id)
+        if cfg is None:
+            await ctx.reply("No active game. Use `!use_game <name>` first.")
+            return
+        if not cfg.game_id:
+            await ctx.reply("No MU game ID stored — run `!setup_game` to detect it.")
+            return
+        state = sheet_reader.load_game_state(cfg.sheet_id)
+        players_by_mu = {p.mu_username.lower(): p for p in state.players}
+        _token, page_rows = await asyncio.to_thread(mu_client.fetch_deaths_page_state, cfg.game_id)
+        names_by_player: dict[str, str] = {}
+        unmatched = []
+        for row in page_rows:
+            player = players_by_mu.get(row["username"].lower())
+            if player is None:
+                unmatched.append(row["username"])
+                continue
+            names_by_player[player.key] = row["role_name"]
+        written = await asyncio.to_thread(sheet_reader.write_mu_role_names, cfg.sheet_id, names_by_player)
+        msg = f"Pulled MU role names: {written} rows updated in `mu_role_name`."
+        if unmatched:
+            msg += f" Could not match to sheet: {', '.join(unmatched)}."
+        await ctx.reply(msg)
+
+    @bot.command(name="push_players")
+    async def push_players(ctx):
+        cfg = db.get_active_game(ctx.channel.id)
+        if cfg is None:
+            await ctx.reply("No active game. Use `!use_game <name>` first.")
+            return
+        if not cfg.game_id:
+            await ctx.reply("No MU game ID stored — run `!setup_game` to detect it.")
+            return
+        state = sheet_reader.load_game_state(cfg.sheet_id)
+        settings_by_username: dict[str, dict] = {}
+        errors: list[str] = []
+        for player in state.players:
+            alignment = normalize_alignment(player.alignment)
+            if alignment is None:
+                errors.append(f"{player.player}: alignment {player.alignment!r} is not one of town/mafia/evil independent/neutral independent")
+                continue
+            color = normalize_hex_color(player.faction_color)
+            if color is None:
+                errors.append(f"{player.player}: faction_color {player.faction_color!r} is not a hex colour")
+                continue
+            settings_by_username[player.mu_username.lower()] = {
+                "role_name": player.mu_role_name,
+                "faction": player.faction,
+                "faction_color": color,
+                "alignment": alignment,
+                "rolepm_verified": "1" if player.rolepm_verified else "0",
+            }
+        if errors:
+            detail = "\n".join(f"- {e}" for e in errors[:10])
+            more = f"\n(+{len(errors) - 10} more)" if len(errors) > 10 else ""
+            await ctx.reply(f"Push aborted — fix these rows on the sheet first:\n{detail}{more}")
+            return
+        matched = await asyncio.to_thread(mu_client.push_player_settings, cfg.game_id, settings_by_username)
+        total = len(state.players)
+        await ctx.reply(f"Player settings pushed: {matched}/{total} players matched on MU. Life state, vote power, flipless, shield/BPV and role PMs left as-is.")

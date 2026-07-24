@@ -439,6 +439,133 @@ class MUClient:
         response.raise_for_status()
         return matched
 
+    def fetch_deaths_page_state(self, game_id: int | str) -> tuple[str, list[dict]]:
+        """Returns (security_token, [current per-player field dicts]) in page order.
+
+        Parses every field on the deaths page, not just the ones Host Ops writes.
+        The form posts as parallel ``[]`` arrays with no per-row save, so a push
+        must resend every field for every player -- fields absent from the POST
+        are blanked server-side. Values here that the sheet does not own are
+        echoed back verbatim by :meth:`push_player_settings`.
+        """
+        response = self._session.get(
+            f"{self.base_url}/modbot/manage-game/deaths/",
+            params={"game_id": game_id},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        token = extract_security_token(response.text)
+        if not token:
+            raise MUClientError(f"Could not find security token on deaths page for game {game_id}")
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        rows: list[dict] = []
+        for block in soup.select("div.edit_player_row"):
+            def _input(name: str, default: str = "") -> str:
+                tag = block.find("input", {"name": name})
+                return str(tag.get("value", default)).strip() if tag else default
+
+            def _select(name: str, default: str = "0") -> str:
+                sel = block.find("select", {"name": name})
+                if not sel:
+                    return default
+                opt = sel.find("option", selected=True)
+                return str(opt.get("value", default)).strip() if opt else default
+
+            name = _input("name[]")
+            slot = _input("slot[]")
+            if not (name and slot):
+                continue
+            card = block.find("textarea", {"name": "rolepm_card[]"})
+            rows.append({
+                "slot": slot,
+                "username": name,
+                # Sheet-owned fields (overridden on push when the sheet supplies them).
+                "role_name": _input("role_name[]"),
+                "faction": _input("faction[]"),
+                "faction_color": _input("faction_color[]"),
+                "alignment": _select("alignment[]", "town"),
+                "rolepm_verified": _input("rolepm_verified[]", "0"),
+                # Echo-only fields. Never written to Sheets, never authored by the
+                # host -- resent exactly as MU reported them.
+                "is_alive": _select("is_alive[]", "1"),
+                "vote_weight": _input("vote_weight[]", "1"),
+                "hide_vote_weight": _select("hide_vote_weight[]", "0"),
+                "flipless": _select("flipless[]", "0"),
+                "ita_shield_status": _input("ita_shield_status[]", "0"),
+                "bpv_status": _input("bpv_status[]", "0"),
+                # Role PM bodies live on the sheet; MU's copy is round-tripped
+                # untouched. ``textarea`` content is text, not a value attribute.
+                "rolepm_card": card.get_text() if card else "",
+            })
+        log.debug("Deaths page state for game %s: %d rows", game_id, len(rows))
+        return token, rows
+
+    def push_player_settings(self, game_id: int | str, settings_by_mu_username: dict[str, dict]) -> int:
+        """POST player settings to MU, preserving every field the sheet does not own.
+
+        Only ``role_name``, ``faction``, ``faction_color``, ``alignment`` and
+        ``rolepm_verified`` are taken from the sheet. Life state, vote power,
+        flipless, shield/BPV and role PM bodies are echoed from the page read
+        moments earlier, so this call can never kill, revive, or alter them.
+
+        Returns the number of players matched from the sheet.
+        """
+        self.login()
+        token, page_rows = self.fetch_deaths_page_state(game_id)
+        if not page_rows:
+            raise MUClientError(f"No player slots found on deaths page for game {game_id}")
+        data: list[tuple[str, str]] = [("s", ""), ("securitytoken", token), ("submit", "1")]
+        matched = 0
+        for row in page_rows:
+            username = row["username"]
+            s = settings_by_mu_username.get(username.lower())
+            if s is not None:
+                matched += 1
+                # A blank mu_role_name means "inherit whatever MU already has",
+                # so an unmaintained (typically hidden) sheet column cannot push
+                # a stale or empty role name over a live one.
+                role_name = s["role_name"] if str(s["role_name"]).strip() else row["role_name"]
+                # faction is deliberately not blank-inherit: Town players
+                # legitimately have no faction, so an empty cell must clear it.
+                faction = s["faction"]
+                faction_color = s["faction_color"]
+                alignment = s["alignment"]
+                rolepm_verified = s["rolepm_verified"]
+            else:
+                role_name = row["role_name"]
+                faction = row["faction"]
+                faction_color = row["faction_color"]
+                alignment = row["alignment"]
+                rolepm_verified = row["rolepm_verified"]
+            data.extend([
+                ("name[]", username),
+                ("slot[]", row["slot"]),
+                ("vote_weight[]", row["vote_weight"]),
+                ("hide_vote_weight[]", row["hide_vote_weight"]),
+                ("ita_shield_status[]", row["ita_shield_status"]),
+                ("bpv_status[]", row["bpv_status"]),
+                ("is_alive[]", row["is_alive"]),
+                ("flipless[]", row["flipless"]),
+                ("alignment[]", alignment),
+                ("faction[]", faction),
+                ("faction_color[]", faction_color),
+                ("role_name[]", role_name),
+                ("rolepm_card[]", row["rolepm_card"]),
+                ("rolepm_verified[]", rolepm_verified),
+            ])
+        log.info("push_player_settings: sending %d player slots to game %s (token=%r)", len(page_rows), game_id, token[:8] if token else None)
+        response = self._session.post(
+            f"{self.base_url}/modbot/manage-game/deaths/",
+            params={"game_id": game_id},
+            data=data,
+            timeout=self.timeout,
+            allow_redirects=True,
+        )
+        log.info("push_player_settings response: status=%s url=%s body=%r", response.status_code, response.url, response.text[:300])
+        response.raise_for_status()
+        return matched
+
     def fetch_player_statuses(self, game_id: int | str) -> dict[str, bool]:
         response = self._session.get(
             f"{self.base_url}/modbot/manage-game/deaths/",
