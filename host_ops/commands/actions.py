@@ -374,12 +374,13 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
     prefix = "[DRY RUN] " if not live_mode else ""
     await _send_log(bot, cfg, f"{prefix}**ITA** target={result.target_name} outcome={outcome}"
                               + (f" source={source}" if source else ""))
+    roll_note = f" (rolled {result.roll:.1f} vs {result.hit_pct:.1f}%)"
     if vest:
-        reply_text = f"{prefix}Vest popped on {result.target_name} (no kill)."
+        reply_text = f"{prefix}Vest popped on {result.target_name} (no kill).{roll_note}"
     elif hit:
-        reply_text = f"{prefix}ITA hit: {result.target_name} is dead."
+        reply_text = f"{prefix}ITA hit: {result.target_name} is dead.{roll_note}"
     else:
-        reply_text = f"{prefix}ITA missed {result.target_name}."
+        reply_text = f"{prefix}ITA missed {result.target_name}.{roll_note}"
     message = reply_text + (f"\n{post_link_out}" if post_link_out else "")
     return result, message
 

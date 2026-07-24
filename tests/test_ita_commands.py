@@ -393,6 +393,7 @@ def test_ita_rolled_miss_posts_quote_and_miss_no_kill(db, basic_state):
     assert threadmark == "Manual ITA: Miss"
     assert not db.is_dead(10, "g", "Alice")
     assert "miss" in message.lower()
+    assert "rolled" in message.lower() and "vs 0.0%" in message  # roll shown against the accuracy
 
 
 def test_ita_accuracy_zero_always_misses(db, basic_state):
