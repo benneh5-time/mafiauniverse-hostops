@@ -95,17 +95,27 @@ def test_login_post_clears_cached_token():
     assert client._security_token is None
 
 
-TOKEN_REJECTED_HTML = "Your submission could not be processed because a security token was missing."
+GETQUOTES_SAMPLE = (
+    '<?xml version="1.0" encoding="utf-8"?>\n'
+    "<quotes><![CDATA[[QUOTE=MU Anniversary 2026;11042484][CENTER][TITLE]"
+    "[B]A shot rings out![/B][/TITLE][/CENTER]\n\ntest?[/QUOTE]\n\n]]></quotes>"
+)
 
 
-def test_post_reply_retries_once_on_rejected_token():
+def _logged_in_session():
     import requests
 
     session = requests.Session()
     session.cookies.set("bb_userid", "4242")
+    return session
+
+
+def test_post_reply_retries_once_when_cached_token_yields_no_post_id():
+    """A stale token produces a response with no post id; the retry uses a fresh token."""
+    session = _logged_in_session()
     session.get = MagicMock(return_value=FakeResponse(text='var SECURITYTOKEN = "tok2";'))
     session.post = MagicMock(side_effect=[
-        FakeResponse(text=TOKEN_REJECTED_HTML),
+        FakeResponse(url="https://mu/threads/1", text="rejected"),  # no post id
         FakeResponse(url="https://mu/threads/1?p=55#post55", text="ok"),
     ])
     client = MUClient("u", "p", session=session)
@@ -116,7 +126,64 @@ def test_post_reply_retries_once_on_rejected_token():
     assert reply.post_id == "55"
     assert session.post.call_count == 2
     assert session.post.call_args.kwargs["data"]["securitytoken"] == "tok2"
-    session.get.assert_called_once()  # exactly one token refresh triggered by the rejection
+    session.get.assert_called_once()  # exactly one token refresh
+
+
+def test_post_reply_does_not_retry_with_a_freshly_fetched_token():
+    """A failure using an already-fresh token is a real error, not staleness."""
+    session = _logged_in_session()
+    session.get = MagicMock(return_value=FakeResponse(text='var SECURITYTOKEN = "fresh";'))
+    session.post = MagicMock(return_value=FakeResponse(url="https://mu/threads/1", text="rejected"))
+    client = MUClient("u", "p", session=session)  # no cached token
+
+    reply = client.post_reply(1, "body")
+
+    assert reply.post_id is None
+    session.post.assert_called_once()  # no pointless retry against MU
+
+
+def test_refresh_token_relogins_when_thread_page_is_guest():
+    """A guest token means the session died, so refresh must re-authenticate."""
+    session = _logged_in_session()
+    session.get = MagicMock(side_effect=[
+        FakeResponse(text='var SECURITYTOKEN = "guest";'),   # served logged-out
+        FakeResponse(text='var SECURITYTOKEN = "real";'),    # after re-login
+    ])
+    session.post = MagicMock(return_value=FakeResponse())
+    client = MUClient("u", "p", session=session)
+
+    assert client.refresh_token(1) == "real"
+    session.post.assert_called_once()  # the forced login POST
+    assert session.post.call_args.kwargs["data"]["do"] == "login"
+    assert client._security_token == "real"
+
+
+def test_refresh_token_never_caches_guest():
+    """If MU still serves guest after re-login, raise rather than cache a useless token."""
+    session = _logged_in_session()
+    session.get = MagicMock(return_value=FakeResponse(text='var SECURITYTOKEN = "guest";'))
+    session.post = MagicMock(return_value=FakeResponse())
+    client = MUClient("u", "p", session=session)
+
+    with pytest.raises(RuntimeError):
+        client.refresh_token(1)
+    assert client._security_token is None
+
+
+def test_fetch_quote_bbcode_retries_once_on_empty_payload_with_cached_token():
+    session = _logged_in_session()
+    session.get = MagicMock(return_value=FakeResponse(text='var SECURITYTOKEN = "tok2";'))
+    session.post = MagicMock(side_effect=[
+        FakeResponse(text="<quotes></quotes>"),   # empty -> likely stale token
+        FakeResponse(text=GETQUOTES_SAMPLE),
+    ])
+    client = MUClient("u", "p", session=session)
+    client._security_token = "stale"
+
+    bbcode = client.fetch_quote_bbcode(1, "11042484")
+
+    assert "A shot rings out!" in bbcode
+    assert session.post.call_count == 2
 
 
 def test_kill_api_get_params():
@@ -149,13 +216,6 @@ def test_threadmark_payload_uses_postnumber_one():
     assert data["do"] == "set_threadmark"
     assert data["postid"] == "999"
     assert data["postnumber"] == "1"
-
-
-GETQUOTES_SAMPLE = (
-    '<?xml version="1.0" encoding="utf-8"?>\n'
-    "<quotes><![CDATA[[QUOTE=MU Anniversary 2026;11042484][CENTER][TITLE]"
-    "[B]A shot rings out![/B][/TITLE][/CENTER]\n\ntest?[/QUOTE]\n\n]]></quotes>"
-)
 
 
 def test_fetch_quote_bbcode_posts_getquotes_with_token_and_post_id():
