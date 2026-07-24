@@ -85,19 +85,19 @@ def test_silent_ita_announcement_hit_has_title_hit_and_reveal():
 def test_silent_ita_threadmark_hit_names_target_and_role():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop")
     name = silent_ita_threadmark_name(target, hit=True)
-    assert name == "A Silent Shot Rings Out! Alice was hit and was Cop"
+    assert name == "A Silent Shot Rings Out! Alice was Cop"
 
 
 def test_silent_ita_threadmark_hit_includes_flavor_before_role():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="Cop", flavor="Nosy Neighbor")
     name = silent_ita_threadmark_name(target, hit=True)
-    assert name == "A Silent Shot Rings Out! Alice was hit and was Nosy Neighbor, Cop"
+    assert name == "A Silent Shot Rings Out! Alice was Nosy Neighbor, Cop"
 
 
 def test_silent_ita_threadmark_hit_without_role():
     target = Player("Alice", "alice_mu", "PM", "Redacted Alice", role_name="")
     name = silent_ita_threadmark_name(target, hit=True)
-    assert name == "A Silent Shot Rings Out! Alice was hit"
+    assert name == "A Silent Shot Rings Out! Alice"
 
 
 def test_silent_ita_announcement_vest_pop_has_hit_no_one_died():
@@ -243,6 +243,21 @@ def test_ita_threadmark_without_role_name():
     assert ita_threadmark_name("Mashy", target) == "In-Thread Attack: Mashy hit gamer"
 
 
-def test_ita_threadmark_vest_pop_says_no_one_died():
+def test_ita_threadmark_vest_pop_names_survivor():
     target = Player("gamer", "gamer_mu", "PM", "Redacted", role_name="Cop")
-    assert ita_threadmark_name("Mashy", target, vest=True) == "Hit! No one has died."
+    assert ita_threadmark_name("Mashy", target, vest=True) == "In-Thread Attack: Mashy hit gamer who survived"
+
+
+def test_ita_threadmark_miss_is_generic_and_hides_role():
+    target = Player("gamer", "gamer_mu", "PM", "Redacted", role_name="Cop")
+    # A miss reveals nothing: not the role, not even the target's name.
+    assert ita_threadmark_name("Mashy", target, miss=True) == "Manual ITA: Miss"
+
+
+def test_ita_announcement_miss_quotes_shot_without_reveal():
+    quote = "[QUOTE=Mashy;123]bang[/QUOTE]"
+    target = Player("gamer", "gamer_mu", "PM", "Redacted Cop", role_name="Cop")
+    announcement = build_ita_announcement(quote, target, miss=True)
+    assert announcement.startswith(quote)
+    assert "[B]Miss![/B]" in announcement
+    assert "Redacted Cop" not in announcement  # role stays hidden on a miss

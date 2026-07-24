@@ -20,6 +20,7 @@ def test_ita_and_resolve_ita_commands_registered():
     assert "resolve_ita" in names  # new: roll-only accuracy command
     assert "reveal" in names        # quote + reveal, local kill only
     assert "elim" in names          # day elimination results, local kill only
+    assert "manual_ita" not in names  # merged into !ita (rolled hit)
 
 
 class FakeSheetReader:
@@ -81,7 +82,7 @@ def test_silent_ita_live_hit_kills_and_posts(db, basic_state):
     announcement, threadmark = args[1], args[2]
     assert "[TITLE]A Silent Shot Rings Out![/TITLE]" in announcement
     assert "[B]Hit![/B]" in announcement
-    assert threadmark == "A Silent Shot Rings Out! Alice was hit"
+    assert threadmark == "A Silent Shot Rings Out! Alice"
     assert db.is_dead(10, "g", "Alice")
     assert "https://www.mafiauniverse.com/forums/threads/123?p=555#post555" in message
 
@@ -142,7 +143,7 @@ def test_ita_live_quotes_kills_and_posts(db, basic_state):
     mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
     result, message = asyncio.run(ita_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
-        host_channel_id=10, target_name="Alice", source="Bob",
+        host_channel_id=10, target_name="Alice", source="Bob", accuracy=100, rng=lambda: 0.0,
         post_link="https://www.mafiauniverse.com/forums/threads/9/page5#post11042484"))
     assert result.success
     mu.fetch_quote_bbcode.assert_called_once()
@@ -169,7 +170,7 @@ def test_ita_link_falls_back_to_constructed_url_when_no_final_url(db, basic_stat
     mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
     _result, message = asyncio.run(ita_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
-        host_channel_id=10, target_name="Alice", source=None,
+        host_channel_id=10, target_name="Alice", source=None, accuracy=100, rng=lambda: 0.0,
         post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
     assert "?p=777#post777" in message
 
@@ -181,7 +182,7 @@ def test_ita_dry_run_marks_dead_without_mu(db, basic_state):
     mu = MagicMock()
     result, _msg = asyncio.run(ita_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=False,
-        host_channel_id=10, target_name="Alice", source=None,
+        host_channel_id=10, target_name="Alice", source=None, accuracy=100, rng=lambda: 0.0,
         post_link="https://www.mafiauniverse.com/forums/showthread.php?p=11042484"))
     assert result.success
     mu.kill.assert_not_called()
@@ -195,7 +196,7 @@ def test_ita_bad_link_returns_error_no_mu(db, basic_state):
     mu = MagicMock()
     result, message = asyncio.run(ita_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
-        host_channel_id=10, target_name="Alice", source=None,
+        host_channel_id=10, target_name="Alice", source=None, accuracy=100, rng=lambda: 0.0,
         post_link="https://www.mafiauniverse.com/forums/threads/9/"))
     assert result is None
     assert "post id" in message.lower()
@@ -303,7 +304,7 @@ def test_ita_warns_and_skips_when_target_shielded(db):
     mu = MagicMock()
     result, message = asyncio.run(ita_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
-        host_channel_id=10, target_name="Alice", source=None,
+        host_channel_id=10, target_name="Alice", source=None, accuracy=100, rng=lambda: 0.0,
         post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
     assert result is None
     assert "shield" in message.lower()
@@ -323,7 +324,7 @@ def test_ita_confirm_overrides_shield(db):
     mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
     result, _msg = asyncio.run(ita_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
-        host_channel_id=10, target_name="Alice", source=None, mode="confirm",
+        host_channel_id=10, target_name="Alice", source=None, mode="confirm", accuracy=100, rng=lambda: 0.0,
         post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
     assert result.success
     mu.kill.assert_called_once()
@@ -340,15 +341,75 @@ def test_ita_vest_pops_hit_no_kill_no_reveal(db):
     mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
     result, _msg = asyncio.run(ita_action(
         bot=bot, db=db, sheet_reader=FakeSheetReader(_shielded_state()), mu_client=mu, live_mode=True,
-        host_channel_id=10, target_name="Alice", source=None, mode="vest",
+        host_channel_id=10, target_name="Alice", source=None, mode="vest", accuracy=100, rng=lambda: 0.0,
         post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
     assert result.success
     mu.kill.assert_not_called()
     announcement, threadmark = mu.post_reply_with_threadmark.call_args.args[1], mu.post_reply_with_threadmark.call_args.args[2]
     assert "[B]Hit! No one has died.[/B]" in announcement
     assert "[SPOILER]" not in announcement
-    assert threadmark == "Hit! No one has died."
+    assert threadmark == "In-Thread Attack: Mashy hit Alice who survived"
     assert not db.is_dead(10, "g", "Alice")
+
+
+# ---- !ita rolled outcomes (shooter from quote author) --------------------
+
+def test_ita_shooter_comes_from_quote_author_not_source(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    mu.fetch_quote_bbcode.return_value = "[QUOTE=QuotedShooter;11042484]I shoot Alice[/QUOTE]"
+    mu.kill.return_value = {"response": "Kill was successful"}
+    reply = MagicMock(post_id="555", final_url="https://mu/threads/9?p=555#post555")
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    result, _message = asyncio.run(ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source="LoggingOnly", accuracy=100, rng=lambda: 0.0,
+        post_link="https://www.mafiauniverse.com/forums/threads/9/page5#post11042484"))
+    assert result.success
+    threadmark = mu.post_reply_with_threadmark.call_args.args[2]
+    # shooter is the quoted post's author, not the source field
+    assert threadmark == "In-Thread Attack: QuotedShooter hit Alice"
+
+
+def test_ita_rolled_miss_posts_quote_and_miss_no_kill(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    mu.fetch_quote_bbcode.return_value = "[QUOTE=Bob;11042484]I shoot Alice[/QUOTE]"
+    reply = MagicMock(post_id="556", final_url="https://mu/threads/9?p=556#post556")
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    result, message = asyncio.run(ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None, accuracy=0, rng=lambda: 0.99,
+        post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
+    assert result.miss
+    mu.kill.assert_not_called()
+    announcement, threadmark = mu.post_reply_with_threadmark.call_args.args[1], mu.post_reply_with_threadmark.call_args.args[2]
+    assert announcement.startswith("[QUOTE=Bob;11042484]I shoot Alice[/QUOTE]")
+    assert "[B]Miss![/B]" in announcement
+    assert threadmark == "Manual ITA: Miss"
+    assert not db.is_dead(10, "g", "Alice")
+    assert "miss" in message.lower()
+
+
+def test_ita_accuracy_zero_always_misses(db, basic_state):
+    _game(db)
+    bot = MagicMock()
+    bot.get_channel.return_value = AsyncMock()
+    mu = MagicMock()
+    mu.fetch_quote_bbcode.return_value = "[QUOTE=Bob;11042484]shot[/QUOTE]"
+    reply = MagicMock(post_id="556", final_url=None)
+    mu.post_reply_with_threadmark.return_value = (reply, MagicMock())
+    # rng() = 0.0 is the most favorable possible roll; accuracy 0 must still miss.
+    result, _msg = asyncio.run(ita_action(
+        bot=bot, db=db, sheet_reader=FakeSheetReader(basic_state), mu_client=mu, live_mode=True,
+        host_channel_id=10, target_name="Alice", source=None, accuracy=0, rng=lambda: 0.0,
+        post_link="https://www.mafiauniverse.com/forums/threads/9#post11042484"))
+    assert result.miss
+    mu.kill.assert_not_called()
 
 
 # ---- !ita (roll-only, report to Discord/log, nothing posted) --------------

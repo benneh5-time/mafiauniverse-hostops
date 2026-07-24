@@ -113,40 +113,59 @@ def build_elim_announcement(target: Player, day: str, reason: str = "") -> str:
     return f"{header}\n\n{reason_text}{build_elim_block(target)}"
 
 
+def _flip_clause(target: Player) -> str:
+    """Unified reveal wording for a threadmark: ``<player> was <flip>``.
+
+    When the player has no flip (no flavor/role), only the name is returned. Every
+    death threadmark uses this so the reveal reads the same across all commands.
+    """
+    if target.flip_name:
+        return f"{target.player} was {target.flip_name}"
+    return target.player
+
+
 def elim_threadmark_name(target: Player, day: str) -> str:
+    # Elimination keeps its verb; the reveal clause matches the unified "was <flip>" form.
     suffix = f", {target.flip_name}" if target.flip_name else ""
     return f"Day {day} Elimination: {target.player} was eliminated{suffix}"
 
 
-def _death_label(event_type: str, vest: bool = False) -> str:
+def _death_label(event_type: str, vest: bool = False, kill_label: str | None = None) -> str:
     if event_type == "ita":
         return "An ITA hits!"
     if event_type == "desperado":
         return "A desperado shot rings out!"
     if event_type == "kill":
-        # A popped vest is not a death, so the sterile kill header does not apply.
-        return "Death?" if vest else "A Player has died!"
+        # !kill uses the caller-supplied flavor header for both a kill and a vest pop
+        # (vest just swaps the reveal for "No one has died."). With no label the
+        # threadmark is header-less and reads as just the reveal or the vest line.
+        return kill_label.strip() if kill_label and kill_label.strip() else ""
     return "A shot rings out!"
 
 
-def _death_header(event_type: str, vest: bool = False) -> str:
-    return f"[CENTER][TITLE][B]{_death_label(event_type, vest)}[/B][/TITLE][/CENTER]"
+def _death_header(event_type: str, vest: bool = False, kill_label: str | None = None) -> str:
+    label = _death_label(event_type, vest, kill_label)
+    if not label:
+        return ""
+    return f"[CENTER][TITLE][B]{label}[/B][/TITLE][/CENTER]"
 
 
-def build_death_announcement(target: Player, event_type: str, reason: str = "", vest: bool = False) -> str:
-    header = _death_header(event_type, vest)
+def build_death_announcement(target: Player, event_type: str, reason: str = "", vest: bool = False,
+                             kill_label: str | None = None) -> str:
+    header = _death_header(event_type, vest, kill_label)
+    header_block = f"{header}\n\n" if header else ""
     if vest:
-        return f"{header}\n\n[B]No one has died.[/B]"
+        return f"{header_block}[B]No one has died.[/B]"
     reason_text = f"{reason.strip()}\n\n" if reason and reason.strip() else ""
-    return f"{header}\n\n{reason_text}{build_death_block(target)}"
+    return f"{header_block}{reason_text}{build_death_block(target)}"
 
 
-def threadmark_name(target: Player, event_type: str, vest: bool = False) -> str:
-    label = _death_label(event_type, vest)
+def threadmark_name(target: Player, event_type: str, vest: bool = False, kill_label: str | None = None) -> str:
+    label = _death_label(event_type, vest, kill_label)
     if vest:
-        return f"{label} No one has died."
-    suffix = f", {target.flip_name}" if target.flip_name else ""
-    return f"{label} {target.player} is dead{suffix}"
+        return f"{label} No one has died.".strip()
+    reveal = _flip_clause(target)
+    return f"{label} {reveal}".strip() if label else reveal
 
 
 def resolve_bomb(*, bomber_name: str, bombee_name: str, state: GameState,
@@ -195,10 +214,12 @@ def resolve_silent_ita(*, target_name: str, hitrate: float, state: GameState,
         return ResolveResult(False, target_name, "silent_ita", str(exc), dry_run=dry_run)
     if is_dead(target.player) or not target.alive:
         return ResolveResult(False, target.player, "silent_ita", f"{target.player} is already dead.", dry_run=dry_run, already_dead=True)
+    # hitrate is the exclusive hit threshold: hitrate 0 never hits (even on a 0.0 roll),
+    # hitrate 100 always hits (roll is in [0, 100)). So a hit is roll < hitrate.
     roll = rng() * 100
-    if roll > hitrate:
-        return ResolveResult(False, target.player, "silent_ita", f"Silent ITA on {target.player} missed ({roll:.1f} > {hitrate:.1f}).", miss=True, roll=roll, hit_pct=hitrate, dry_run=dry_run)
-    return ResolveResult(True, target.player, "silent_ita", f"Silent ITA on {target.player} hit ({roll:.1f} <= {hitrate:.1f}).", roll=roll, hit_pct=hitrate, dry_run=dry_run)
+    if roll >= hitrate:
+        return ResolveResult(False, target.player, "silent_ita", f"Silent ITA on {target.player} missed ({roll:.1f} >= {hitrate:.1f}).", miss=True, roll=roll, hit_pct=hitrate, dry_run=dry_run)
+    return ResolveResult(True, target.player, "silent_ita", f"Silent ITA on {target.player} hit ({roll:.1f} < {hitrate:.1f}).", roll=roll, hit_pct=hitrate, dry_run=dry_run)
 
 
 def build_silent_ita_announcement(target: Player, hit: bool, vest: bool = False) -> str:
@@ -216,15 +237,18 @@ def silent_ita_threadmark_name(target: Player, hit: bool, vest: bool = False) ->
         return "A Silent Shot Rings Out! Miss"
     if vest:
         return "A Silent Shot Rings Out! Hit! No one has died."
-    role = f" and was {target.flip_name}" if target.flip_name else ""
-    return f"A Silent Shot Rings Out! {target.player} was hit{role}"
+    return f"A Silent Shot Rings Out! {_flip_clause(target)}"
 
 
-def build_ita_announcement(quote_bbcode: str, target: Player, vest: bool = False) -> str:
+def build_ita_announcement(quote_bbcode: str, target: Player, vest: bool = False, miss: bool = False) -> str:
     """Quote (already wrapped by MU) + Hit! + standard death reveal.
 
     With ``vest=True`` the shot pops a vest/shield: Hit! is posted but no death reveal.
+    With ``miss=True`` the shot whiffs: the quote is posted with Miss! and no reveal
+    (used by ``!manual_ita`` when the rolled hit fails).
     """
+    if miss:
+        return f"{quote_bbcode.strip()}\n\n[B]Miss![/B]"
     if vest:
         return f"{quote_bbcode.strip()}\n\n[B]Hit! No one has died.[/B]"
     return f"{quote_bbcode.strip()}\n\n[B]Hit![/B]\n\n{build_death_block(target)}"
@@ -249,8 +273,11 @@ def extract_quote_author(quote_bbcode: str) -> str | None:
     return match.group(1).strip() or None
 
 
-def ita_threadmark_name(shooter: str, target: Player, vest: bool = False) -> str:
+def ita_threadmark_name(shooter: str, target: Player, vest: bool = False, miss: bool = False) -> str:
+    if miss:
+        # A miss reveals nothing about the target, so the threadmark is generic.
+        return "Manual ITA: Miss"
     if vest:
-        return "Hit! No one has died."
+        return f"In-Thread Attack: {shooter} hit {target.player} who survived"
     role = f" who was {target.flip_name}" if target.flip_name else ""
     return f"In-Thread Attack: {shooter} hit {target.player}{role}"

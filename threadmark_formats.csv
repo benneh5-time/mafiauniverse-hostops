@@ -1,0 +1,18 @@
+﻿Command,Example input,Builder,Threadmark output
+!kill,!kill Alice | A gunshot rings out | vig shot,threadmark_name,"A gunshot rings out Alice was Nosy Neighbor, Cop"
+!kill,!kill Alice | | vig shot  (no label),threadmark_name,"Alice was Nosy Neighbor, Cop"
+!kill,!kill Alice | A gunshot rings out | flavor | vest,threadmark_name,No one has died.
+!dayvig,!dayvig Alice | daykill flavor,threadmark_name,"A shot rings out! Alice was Nosy Neighbor, Cop"
+!dayvig,!dayvig Alice | flavor | vest,threadmark_name,A shot rings out! No one has died.
+!desperado,!desperado Alice | desperado flavor,threadmark_name,"A desperado shot rings out! Alice was Nosy Neighbor, Cop"
+!desperado,!desperado Alice | flavor | vest,threadmark_name,A desperado shot rings out! No one has died.
+!bomb,!bomb Bob | Alice | bomb flavor,BombResolveResult.threadmark_name,A bomb goes off! Bob and Alice are dead
+!bomb,!bomb Bob | Alice | flavor | vest,BombResolveResult.threadmark_name,A bomb goes off! Bob is dead
+!ita,!ita Alice | Shooter | <post link>,ita_threadmark_name,"In-Thread Attack: Shooter hit Alice who was Nosy Neighbor, Cop"
+!ita,!ita Alice | Shooter | <post link> | vest,ita_threadmark_name,In-Thread Attack: Shooter hit Alice who survived
+!reveal,!reveal Alice | <post link>,ita_threadmark_name,"In-Thread Attack: QuoteAuthor hit Alice who was Nosy Neighbor, Cop"
+Manual ITA (poller),auto-caught 'Manual ITA: Alice' post,threadmark_name,"An ITA hits! Alice was Nosy Neighbor, Cop"
+!silent_ita,!silent_ita Alice | Source | 18,silent_ita_threadmark_name,"A Silent Shot Rings Out! Alice was Nosy Neighbor, Cop"
+!silent_ita,!silent_ita Alice | Source | 18  (miss),silent_ita_threadmark_name,A Silent Shot Rings Out! Miss
+!silent_ita,!silent_ita Alice | Source | 18 | vest,silent_ita_threadmark_name,A Silent Shot Rings Out! Hit! No one has died.
+!elim,!elim Alice | lynch flavor | 3,elim_threadmark_name,"Day 3 Elimination: Alice was eliminated, Nosy Neighbor, Cop"

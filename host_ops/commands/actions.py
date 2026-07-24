@@ -69,7 +69,8 @@ async def _send_log(bot, cfg, text: str) -> None:
 
 async def resolve_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
                          host_channel_id: int, target_name: str, event_type: str, phase: str = "any",
-                         shooter: str | None = None, reason: str = "", mode: str | None = None):
+                         shooter: str | None = None, reason: str = "", mode: str | None = None,
+                         kill_label: str | None = None):
     cfg = db.get_active_game(host_channel_id)
     if cfg is None:
         return None, "No active game. Use `!use_game <name>` first."
@@ -113,8 +114,8 @@ async def resolve_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_cl
             if not kill_ok:
                 return result, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
             result.mu_response = kill_response
-        announcement = build_death_announcement(target, event_type, reason, vest=vest)
-        reply, _threadmark_response = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark_name(target, event_type, vest=vest))
+        announcement = build_death_announcement(target, event_type, reason, vest=vest, kill_label=kill_label)
+        reply, _threadmark_response = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark_name(target, event_type, vest=vest, kill_label=kill_label))
         mu_post_id = reply.post_id
         post_link = _post_link(reply, cfg.thread_id)
         result.announcement_post_id = reply.post_id
@@ -297,8 +298,15 @@ async def silent_ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu
 
 
 async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClient, live_mode: bool,
-                     host_channel_id: int, target_name: str, source: str | None, post_link: str,
-                     mode: str | None = None):
+                     host_channel_id: int, target_name: str, source: str | None, accuracy: float,
+                     post_link: str, mode: str | None = None, rng=random.random):
+    """Quote a shot post and roll the hit against ``accuracy`` (0-100).
+
+    The shooter is the quoted post's author. A hit posts the quote + Hit! + reveal and
+    kills on MU; a vest pop posts Hit! No one has died; a miss posts the quote + Miss! and
+    leaves the target alive. The hit is purely ``rng() * 100 <= accuracy`` -- sheet ITA
+    settings are ignored (0 always misses, 100 always hits).
+    """
     cfg = db.get_active_game(host_channel_id)
     if cfg is None:
         return None, "No active game. Use `!use_game <name>` first."
@@ -308,53 +316,71 @@ async def ita_action(*, bot, db: HostOpsDB, sheet_reader: SheetReader, mu_client
         return None, str(exc)
 
     mode = _normalize_mode(mode)
-    vest = mode == "vest"
     state = sheet_reader.load_game_state(cfg.sheet_id)
     dead = db.dead_players(cfg.host_channel_id, cfg.name)
     for player in state.players:
         if normalize_name(player.player) in dead:
             player.alive = False
-    try:
-        target = resolve_player(target_name, state.players)
-    except ResolutionError as exc:
-        return None, str(exc)
-    if db.is_dead(cfg.host_channel_id, cfg.name, target.player) or not target.alive:
-        return None, f"{target.player} is already dead."
 
-    # A real flip cannot be undone, so guard a killing ITA against shielded/BPV targets.
-    if not vest and mode != "confirm":
+    # Roll against the supplied accuracy: same "roll vs rate" semantics as silent ITA,
+    # sheet settings ignored.
+    result = resolve_silent_ita(target_name=target_name, hitrate=accuracy, state=state,
+                                is_dead=lambda name: db.is_dead(cfg.host_channel_id, cfg.name, name),
+                                dry_run=not live_mode, rng=rng)
+    if result.already_dead or (not result.success and not result.miss):
+        return result, result.message
+
+    hit = result.success
+    miss = result.miss
+    vest = hit and mode == "vest"
+    target = resolve_player(result.target_name, state.players)
+
+    # A hit that would post a death (not a vest pop, not already confirmed) is guarded
+    # against shielded/BPV targets, since a real flip cannot be undone.
+    if hit and not vest and mode != "confirm":
         warning = ita_protection_warning(target, state)
         if warning:
             return None, warning
 
+    kills = hit and not vest  # vest pop and miss connect/whiff but do not kill
     mu_post_id = None
-    post_link = None
+    post_link_out = None
     if live_mode:
         quote_bbcode = await asyncio.to_thread(mu_client.fetch_quote_bbcode, cfg.thread_id, post_id)
-        announcement = build_ita_announcement(quote_bbcode, target, vest=vest)
         shooter = extract_quote_author(quote_bbcode) or source or "Unknown"
-        if not vest:
+        announcement = build_ita_announcement(quote_bbcode, target, vest=vest, miss=miss)
+        threadmark = ita_threadmark_name(shooter, target, vest=vest, miss=miss)
+        if kills:
             abort = await _modbot_precheck(mu_client, cfg, target)
             if abort:
-                return None, abort
+                return result, abort
             kill_response = await asyncio.to_thread(mu_client.kill, cfg.thread_id, target.mu_username)
             if not _kill_confirmed(kill_response):
-                return None, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
-        reply, _tm = await asyncio.to_thread(
-            mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, ita_threadmark_name(shooter, target, vest=vest))
+                return result, f"MU kill did not confirm success for {target.player} — post/threadmark skipped. MU said: {kill_response}"
+            result.mu_response = kill_response
+        reply, _tm = await asyncio.to_thread(mu_client.post_reply_with_threadmark, cfg.thread_id, announcement, threadmark)
         mu_post_id = reply.post_id
-        post_link = _post_link(reply, cfg.thread_id)
+        post_link_out = _post_link(reply, cfg.thread_id)
+        result.announcement_post_id = reply.post_id
+        result.threadmark_ok = True
 
-    if not vest:
-        db.mark_dead(cfg.host_channel_id, cfg.name, target.player, "ita")
-    outcome = "vest_pop" if vest else "killed"
-    db.log_event(cfg.host_channel_id, cfg.name, "ita", target.player, outcome, shooter=source,
-                 dry_run=not live_mode, mu_post_id=mu_post_id, notes=f"quote post {post_id}")
+    if kills:
+        db.mark_dead(cfg.host_channel_id, cfg.name, result.target_name, "ita")
+
+    outcome = "vest_pop" if vest else ("killed" if hit else "missed")
+    db.log_event(cfg.host_channel_id, cfg.name, "ita", result.target_name, outcome, shooter=source,
+                 roll=result.roll, hit_pct=result.hit_pct, dry_run=not live_mode, mu_post_id=mu_post_id,
+                 notes=f"quote post {post_id}")
     prefix = "[DRY RUN] " if not live_mode else ""
-    await _send_log(bot, cfg, f"{prefix}**ITA** target={target.player} outcome={outcome}" + (f" source={source}" if source else ""))
-    reply_text = f"{prefix}Vest popped on {target.player} (no kill)." if vest else f"{prefix}ITA hit: {target.player} is dead."
-    message = reply_text + (f"\n{post_link}" if post_link else "")
-    result = ResolveResult(True, target.player, "ita", message, dry_run=not live_mode, announcement_post_id=mu_post_id)
+    await _send_log(bot, cfg, f"{prefix}**ITA** target={result.target_name} outcome={outcome}"
+                              + (f" source={source}" if source else ""))
+    if vest:
+        reply_text = f"{prefix}Vest popped on {result.target_name} (no kill)."
+    elif hit:
+        reply_text = f"{prefix}ITA hit: {result.target_name} is dead."
+    else:
+        reply_text = f"{prefix}ITA missed {result.target_name}."
+    message = reply_text + (f"\n{post_link_out}" if post_link_out else "")
     return result, message
 
 
@@ -490,7 +516,17 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
 
     @bot.command(name="kill")
     async def kill(ctx, *, args: str = ""):
-        await _single_target_kill(ctx, args, "kill")
+        # !kill takes an extra flavor-label field that becomes the threadmark/post header,
+        # e.g. "A gunshot rings out". Left blank, the threadmark is just the reveal.
+        player, label, reason, mode = parse_pipe_args(args, 4)
+        if not player:
+            await ctx.reply("Usage: `!kill <player> | <flavor label> | <reason> | [confirm|vest]`")
+            return
+        _result, message = await resolve_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
+                                                live_mode=live_mode, host_channel_id=ctx.channel.id,
+                                                target_name=player, event_type="kill", reason=reason, mode=mode,
+                                                kill_label=label or None)
+        await ctx.reply(message)
 
     @bot.command(name="dayvig")
     async def dayvig(ctx, *, args: str = ""):
@@ -527,13 +563,22 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
 
     @bot.command(name="ita")
     async def ita(ctx, *, args: str = ""):
-        target, source, post_link, mode = parse_pipe_args(args, 4)
-        if not target or not post_link:
-            await ctx.reply("Usage: `!ita <target> | <source> | <post link> | [confirm|vest]`")
+        target, source, accuracy_raw, post_link, mode = parse_pipe_args(args, 5)
+        if not target or not accuracy_raw or not post_link:
+            await ctx.reply("Usage: `!ita <target> | <source> | <accuracy 0-100> | <post link> | [confirm|vest]`")
+            return
+        try:
+            accuracy = int(accuracy_raw.rstrip("%").strip())
+        except ValueError:
+            await ctx.reply(f"Invalid accuracy: `{accuracy_raw}` (must be a whole number 0-100)")
+            return
+        if not 0 <= accuracy <= 100:
+            await ctx.reply(f"Accuracy must be between 0 and 100, got `{accuracy}`.")
             return
         _result, message = await ita_action(bot=bot, db=db, sheet_reader=sheet_reader, mu_client=mu_client,
                                             live_mode=live_mode, host_channel_id=ctx.channel.id,
-                                            target_name=target, source=source or None, post_link=post_link, mode=mode)
+                                            target_name=target, source=source or None, accuracy=accuracy,
+                                            post_link=post_link, mode=mode)
         await ctx.reply(message)
 
     @bot.command(name="elim")

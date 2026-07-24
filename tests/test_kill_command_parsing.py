@@ -26,8 +26,14 @@ def _make_bot(monkeypatch):
         captured["_which"] = "resolve_bomb_action"
         return (MagicMock(), "ok")
 
+    async def fake_ita_action(**kwargs):
+        captured.update(kwargs)
+        captured["_which"] = "ita_action"
+        return (MagicMock(), "ok")
+
     monkeypatch.setattr(actions, "resolve_action", fake_resolve_action)
     monkeypatch.setattr(actions, "resolve_bomb_action", fake_resolve_bomb_action)
+    monkeypatch.setattr(actions, "ita_action", fake_ita_action)
 
     actions.register(bot, db=MagicMock(), sheet_reader=MagicMock(), mu_client=MagicMock(), live_mode=False)
     return bot, captured
@@ -42,26 +48,38 @@ def _run(bot, name, args):
     return ctx
 
 
-def test_kill_splits_player_and_reason_on_pipe(monkeypatch):
+def test_kill_splits_player_label_and_reason_on_pipe(monkeypatch):
     bot, captured = _make_bot(monkeypatch)
-    _run(bot, "kill", "Alice | night kill")
+    _run(bot, "kill", "Alice | A gunshot rings out | night kill")
     assert captured["_which"] == "resolve_action"
     assert captured["event_type"] == "kill"
     assert captured["target_name"] == "Alice"
+    assert captured["kill_label"] == "A gunshot rings out"
     assert captured["reason"] == "night kill"
 
 
-def test_kill_without_reason(monkeypatch):
+def test_kill_second_field_is_the_label_not_the_reason(monkeypatch):
+    """Field order is player | label | reason; a two-field kill fills the label."""
     bot, captured = _make_bot(monkeypatch)
-    _run(bot, "kill", "Alice")
+    _run(bot, "kill", "Alice | night kill")
     assert captured["target_name"] == "Alice"
+    assert captured["kill_label"] == "night kill"
     assert captured["reason"] == ""
 
 
-def test_kill_preserves_spaces_in_player_and_reason(monkeypatch):
+def test_kill_without_label_or_reason(monkeypatch):
     bot, captured = _make_bot(monkeypatch)
-    _run(bot, "kill", "Big Mommy Meowers | shot by the vig at night")
+    _run(bot, "kill", "Alice")
+    assert captured["target_name"] == "Alice"
+    assert captured["kill_label"] is None
+    assert captured["reason"] == ""
+
+
+def test_kill_preserves_spaces_in_player_label_and_reason(monkeypatch):
+    bot, captured = _make_bot(monkeypatch)
+    _run(bot, "kill", "Big Mommy Meowers | A gunshot rings out | shot by the vig at night")
     assert captured["target_name"] == "Big Mommy Meowers"
+    assert captured["kill_label"] == "A gunshot rings out"
     assert captured["reason"] == "shot by the vig at night"
 
 
@@ -103,7 +121,50 @@ def test_bomb_without_reason(monkeypatch):
     _run(bot, "bomb", "Alice | Bob")
     assert captured["bomber_name"] == "Alice"
     assert captured["bombee_name"] == "Bob"
-    assert captured["reason"] == ""
+
+
+def test_ita_parses_target_source_accuracy_and_link(monkeypatch):
+    bot, captured = _make_bot(monkeypatch)
+    _run(bot, "ita", "Alice | Bob | 35 | https://mu/threads/9#post123")
+    assert captured["_which"] == "ita_action"
+    assert captured["target_name"] == "Alice"
+    assert captured["source"] == "Bob"
+    assert captured["accuracy"] == 35
+    assert captured["post_link"] == "https://mu/threads/9#post123"
+
+
+def test_ita_source_may_be_blank(monkeypatch):
+    bot, captured = _make_bot(monkeypatch)
+    _run(bot, "ita", "Alice |  | 100 | https://mu/threads/9#post123")
+    assert captured["source"] is None
+    assert captured["accuracy"] == 100
+
+
+def test_ita_accepts_trailing_percent_on_accuracy(monkeypatch):
+    bot, captured = _make_bot(monkeypatch)
+    _run(bot, "ita", "Alice | Bob | 50% | https://mu/threads/9#post123")
+    assert captured["accuracy"] == 50
+
+
+def test_ita_rejects_non_integer_accuracy(monkeypatch):
+    bot, captured = _make_bot(monkeypatch)
+    ctx = _run(bot, "ita", "Alice | Bob | high | https://mu/threads/9#post123")
+    assert "_which" not in captured
+    assert "accuracy" in ctx.reply.await_args.args[0].lower()
+
+
+def test_ita_rejects_out_of_range_accuracy(monkeypatch):
+    bot, captured = _make_bot(monkeypatch)
+    ctx = _run(bot, "ita", "Alice | Bob | 150 | https://mu/threads/9#post123")
+    assert "_which" not in captured
+    assert "between 0 and 100" in ctx.reply.await_args.args[0]
+
+
+def test_ita_missing_link_shows_usage(monkeypatch):
+    bot, captured = _make_bot(monkeypatch)
+    ctx = _run(bot, "ita", "Alice | Bob | 35")
+    assert "_which" not in captured
+    assert "Usage" in ctx.reply.await_args.args[0]
 
 
 def test_bomb_missing_bombee_shows_usage(monkeypatch):

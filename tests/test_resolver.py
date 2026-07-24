@@ -122,19 +122,27 @@ def test_death_announcement_puts_reason_above_death_block(basic_state):
     assert announcement.index("He's dead to the gun!") < announcement.index("has died")
 
 
-def test_kill_uses_sterile_header_distinct_from_dayvig(basic_state):
+def test_kill_uses_caller_label_as_header(basic_state):
     target = basic_state.players[0]
-    kill = build_death_announcement(target, "kill", "flavor")
+    kill = build_death_announcement(target, "kill", "flavor", kill_label="A gunshot rings out")
     dayvig = build_death_announcement(target, "dayvig", "flavor")
-    assert "A Player has died!" in kill
+    assert "A gunshot rings out" in kill
     assert "A shot rings out!" not in kill
     assert "A shot rings out!" in dayvig
-    assert threadmark_name(target, "kill").startswith("A Player has died!")
+    assert threadmark_name(target, "kill", kill_label="A gunshot rings out").startswith("A gunshot rings out")
+
+
+def test_kill_without_label_is_headerless(basic_state):
+    """No label -> the threadmark is just the reveal, and the post has no death header."""
+    target = Player("Alice", "alice_mu", "PM", "Redacted", role_name="Cop", flavor="Nosy Neighbor")
+    assert threadmark_name(target, "kill") == "Alice was Nosy Neighbor, Cop"
+    announcement = build_death_announcement(target, "kill", "")
+    assert not announcement.startswith("[CENTER]")
 
 
 def test_death_threadmark_includes_flavor_before_role_name():
     target = Player("Alice", "alice_mu", "PM", "Redacted", role_name="Cop", flavor="Nosy Neighbor")
-    assert threadmark_name(target, "kill") == "A Player has died! Alice is dead, Nosy Neighbor, Cop"
+    assert threadmark_name(target, "kill", kill_label="A Player has died!") == "A Player has died! Alice was Nosy Neighbor, Cop"
 
 
 def test_elim_threadmark_includes_flavor_before_role_name():
@@ -149,20 +157,26 @@ def test_vest_pop_announcement_omits_reason(basic_state):
     assert "No one has died." in announcement
 
 
-def test_kill_vest_pop_uses_ambiguous_header(basic_state):
+def test_kill_vest_pop_uses_caller_label(basic_state):
+    """A kill vest pop keeps the supplied flavor header, swapping the reveal for the vest line."""
     target = basic_state.players[0]
-    announcement = build_death_announcement(target, "kill", "flavor", vest=True)
-    assert "Death?" in announcement
-    assert "A Player has died!" not in announcement
-    assert threadmark_name(target, "kill", vest=True).startswith("Death?")
+    announcement = build_death_announcement(target, "kill", "flavor", vest=True, kill_label="A gunshot rings out")
+    assert "A gunshot rings out" in announcement
+    assert "No one has died." in announcement
+    tm = threadmark_name(target, "kill", vest=True, kill_label="A gunshot rings out")
+    assert tm == "A gunshot rings out No one has died."
 
 
-def test_vest_pop_header_change_is_scoped_to_kill(basic_state):
+def test_kill_vest_pop_without_label_is_headerless(basic_state):
+    target = basic_state.players[0]
+    assert threadmark_name(target, "kill", vest=True) == "No one has died."
+
+
+def test_dayvig_and_desperado_vest_keep_their_fixed_headers(basic_state):
     target = basic_state.players[0]
     for event_type, header in (("dayvig", "A shot rings out!"), ("desperado", "A desperado shot rings out!")):
         announcement = build_death_announcement(target, event_type, "flavor", vest=True)
         assert header in announcement
-        assert "Death?" not in announcement
 
 
 def test_bomb_threadmark_name_mentions_both(basic_state):
