@@ -154,7 +154,7 @@ def test_vest_pop_announcement_omits_reason(basic_state):
     target = basic_state.players[0]
     announcement = build_death_announcement(target, "kill", "He's dead to the gun!", vest=True)
     assert "He's dead to the gun!" not in announcement
-    assert "No one has died." in announcement
+    assert "[B]Hit! No one has died.[/B]" in announcement
 
 
 def test_kill_vest_pop_uses_caller_label(basic_state):
@@ -162,7 +162,7 @@ def test_kill_vest_pop_uses_caller_label(basic_state):
     target = basic_state.players[0]
     announcement = build_death_announcement(target, "kill", "flavor", vest=True, kill_label="A gunshot rings out")
     assert "A gunshot rings out" in announcement
-    assert "No one has died." in announcement
+    assert "[B]Hit! No one has died.[/B]" in announcement
     tm = threadmark_name(target, "kill", vest=True, kill_label="A gunshot rings out")
     assert tm == "A gunshot rings out No one has died."
 

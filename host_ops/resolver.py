@@ -155,7 +155,7 @@ def build_death_announcement(target: Player, event_type: str, reason: str = "", 
     header = _death_header(event_type, vest, kill_label)
     header_block = f"{header}\n\n" if header else ""
     if vest:
-        return f"{header_block}[B]No one has died.[/B]"
+        return f"{header_block}[B]Hit! No one has died.[/B]"
     reason_text = f"{reason.strip()}\n\n" if reason and reason.strip() else ""
     return f"{header_block}{reason_text}{build_death_block(target)}"
 
