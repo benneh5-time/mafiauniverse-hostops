@@ -23,21 +23,41 @@ class SheetValidationError(ValueError):
 def normalize_alignment(value: Any) -> str | None:
     """Map a sheet alignment cell to one of MU's ``<select>`` values.
 
-    Returns ``None`` for an unrecognised value. MU silently coerces anything
-    off-list (most likely to ``town``), which would be an invisible mis-flip,
-    so callers must reject rather than guess.
+    Blank returns ``""`` (inherit MU's value). Returns ``None`` for an
+    unrecognised non-blank value: MU silently coerces anything off-list (most
+    likely to ``town``), which would be an invisible mis-flip, so callers must
+    reject rather than guess.
     """
     text = str(value or "").strip().casefold()
     if not text:
-        return None
+        return ""
     return text if text in MU_ALIGNMENTS else None
 
 
+def normalize_verified(value: Any) -> str | None:
+    """Map a sheet verified cell to MU's ``1``/``0``.
+
+    Blank returns ``""`` (inherit MU's value) rather than ``0``, so a column the
+    host has not filled in cannot mark every player Not Verified.
+    """
+    text = str(value or "").strip().casefold()
+    if not text:
+        return ""
+    if text in {"1", "true", "yes", "y", "on", "verified"}:
+        return "1"
+    if text in {"0", "false", "no", "n", "off", "not verified"}:
+        return "0"
+    return None
+
+
 def normalize_hex_color(value: Any) -> str | None:
-    """Coerce a sheet colour cell to ``#rrggbb``; ``None`` if unparseable."""
+    """Coerce a sheet colour cell to ``#rrggbb``.
+
+    Blank returns ``""`` (inherit MU's value); ``None`` if unparseable.
+    """
     text = str(value or "").strip()
     if not text:
-        return None
+        return ""
     match = HEX_COLOR_RE.match(text)
     if not match:
         return None
@@ -139,47 +159,56 @@ class SheetReader:
         ws.clear()
         ws.update(data, "A1")
 
-    def write_mu_role_names(self, sheet_url_or_id: str, names_by_player: dict[str, str]) -> int:
-        """Update only the ``mu_role_name`` column on Mashy Players, in place.
+    def write_mu_columns(self, sheet_url_or_id: str, values_by_player: dict[str, dict[str, str]], columns: tuple[str, ...]) -> int:
+        """Update only the named MU mirror columns on Mashy Players, in place.
 
-        Every other column on the tab is host-authored, so this writes a single
-        column range rather than rewriting the sheet. Adds the column if absent.
-        Returns the number of cells written.
+        Every other column on the tab is host-authored, so this writes one
+        column range per field rather than rewriting the sheet. Missing columns
+        are appended to the header row. Returns the number of players updated.
         """
         spreadsheet = self._client().open_by_key(extract_sheet_id(sheet_url_or_id))
         ws = spreadsheet.worksheet("Mashy Players")
         all_values = ws.get_all_values()
         if not all_values:
             raise SheetValidationError("Mashy Players tab is empty")
-        headers = all_values[0]
+        headers = list(all_values[0])
         normalized = [normalize_name(h).replace(" ", "_") for h in headers]
         if "player" not in normalized:
             raise SheetValidationError("Mashy Players missing required columns: player")
         player_idx = normalized.index("player")
-        if "mu_role_name" in normalized:
-            col_idx = normalized.index("mu_role_name")
-        else:
-            col_idx = len(headers)
-            ws.update_cell(1, col_idx + 1, "mu_role_name")
 
-        column = [[""] for _ in range(len(all_values) - 1)]
-        written = 0
-        for offset, row in enumerate(all_values[1:]):
-            name = row[player_idx].strip() if player_idx < len(row) else ""
-            if not name:
-                # Preserve whatever sits beside a blank player row.
-                column[offset] = [row[col_idx] if col_idx < len(row) else ""]
-                continue
-            value = names_by_player.get(normalize_name(name))
-            if value is None:
-                column[offset] = [row[col_idx] if col_idx < len(row) else ""]
-                continue
-            column[offset] = [value]
-            written += 1
-        if column:
-            letter = _column_letter(col_idx + 1)
-            ws.update(column, f"{letter}2:{letter}{len(column) + 1}")
-        return written
+        col_indexes: dict[str, int] = {}
+        for column in columns:
+            if column in normalized:
+                col_indexes[column] = normalized.index(column)
+            else:
+                col_indexes[column] = len(headers)
+                ws.update_cell(1, len(headers) + 1, column)
+                headers.append(column)
+                normalized.append(column)
+
+        updated: set[str] = set()
+        for column in columns:
+            col_idx = col_indexes[column]
+            cells = [[""] for _ in range(len(all_values) - 1)]
+            for offset, row in enumerate(all_values[1:]):
+                existing = row[col_idx] if col_idx < len(row) else ""
+                name = row[player_idx].strip() if player_idx < len(row) else ""
+                if not name:
+                    # Preserve whatever sits beside a blank player row.
+                    cells[offset] = [existing]
+                    continue
+                key = normalize_name(name)
+                fields = values_by_player.get(key)
+                if fields is None or column not in fields:
+                    cells[offset] = [existing]
+                    continue
+                cells[offset] = [fields[column]]
+                updated.add(key)
+            if cells:
+                letter = _column_letter(col_idx + 1)
+                ws.update(cells, f"{letter}2:{letter}{len(cells) + 1}")
+        return len(updated)
 
     def load_game_state(self, sheet_url_or_id: str) -> GameState:
         spreadsheet = self._client().open_by_key(extract_sheet_id(sheet_url_or_id))
@@ -214,7 +243,7 @@ def parse_game_state(rows_by_tab: dict[str, list[dict[str, Any]]]) -> GameState:
         redacted = str(row.get("redacted_role_pm", "")).strip()
         if not redacted:
             raise SheetValidationError(f"Missing redacted_role_pm for {name}")
-        players.append(Player(name, str(row.get("mu_username", "")).strip() or name, str(row.get("role_pm", "")).strip(), redacted, _truthy(row.get("alive"), True), str(row.get("alignment", "")).strip(), str(row.get("role_name", "")).strip(), str(row.get("notes", "")).strip(), str(row.get("flavor", "")).strip(), str(row.get("mu_role_name", "")).strip(), str(row.get("faction", "")).strip(), str(row.get("faction_color", "")).strip(), _truthy(row.get("rolepm_verified"), False)))
+        players.append(Player(name, str(row.get("mu_username", "")).strip() or name, str(row.get("role_pm", "")).strip(), redacted, _truthy(row.get("alive"), True), str(row.get("alignment", "")).strip(), str(row.get("role_name", "")).strip(), str(row.get("notes", "")).strip(), str(row.get("flavor", "")).strip(), str(row.get("mu_role_name", "")).strip(), str(row.get("mu_alignment", "")).strip(), str(row.get("faction", "")).strip(), str(row.get("faction_color", "")).strip(), str(row.get("rolepm_verified", "")).strip()))
 
     protections = [Protection(str(row.get("phase", "any")).strip() or "any", str(row.get("target", "")).strip(), str(row.get("protection_type", "")).strip(), str(row.get("source", "")).strip(), _int(row.get("uses"), -1), _truthy(row.get("active"), True), str(row.get("blocks_events", "any")).strip() or "any", str(row.get("notes", "")).strip()) for row in (_norm_row(r) for r in protection_rows) if str(row.get("target", "")).strip()]
     ita_settings = [ITASettings(str(row.get("phase", "any")).strip() or "any", _float(row.get("default_hit_pct"), 0.0), str(row.get("player", "")).strip(), _float_or_none(row.get("hit_pct_override")), _immunity(row.get("immune"), 0), _float(row.get("bonus"), 0.0), _float(row.get("penalty"), 0.0), _int(row.get("shots_allowed"), -1), _int(row.get("vulnerability"), 0), _int(row.get("shield_status"), 0), _int(row.get("bpv_status"), 0)) for row in (_norm_row(r) for r in ita_rows)]

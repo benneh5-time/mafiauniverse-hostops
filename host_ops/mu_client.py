@@ -522,16 +522,19 @@ class MUClient:
             s = settings_by_mu_username.get(username.lower())
             if s is not None:
                 matched += 1
-                # A blank mu_role_name means "inherit whatever MU already has",
-                # so an unmaintained (typically hidden) sheet column cannot push
-                # a stale or empty role name over a live one.
-                role_name = s["role_name"] if str(s["role_name"]).strip() else row["role_name"]
-                # faction is deliberately not blank-inherit: Town players
-                # legitimately have no faction, so an empty cell must clear it.
-                faction = s["faction"]
-                faction_color = s["faction_color"]
-                alignment = s["alignment"]
-                rolepm_verified = s["rolepm_verified"]
+                # Every sheet-owned field is blank-inherit: an empty cell means
+                # "leave MU alone". A column the host has not added or filled in
+                # reads as empty for every player, so treating blank as a value
+                # would push nulls over live data on the first run.
+                def _pick(key: str) -> str:
+                    value = s.get(key, "")
+                    return value if str(value).strip() else row[key]
+
+                role_name = _pick("role_name")
+                faction = _pick("faction")
+                faction_color = _pick("faction_color")
+                alignment = _pick("alignment")
+                rolepm_verified = _pick("rolepm_verified")
             else:
                 role_name = row["role_name"]
                 faction = row["faction"]

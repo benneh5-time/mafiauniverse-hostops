@@ -6,7 +6,12 @@ from ..db import HostOpsDB
 from ..models import GameConfig
 from ..mu_client import MUClient
 from ..resolver import choose_ita_settings
-from ..sheets import SheetReader, extract_sheet_id, normalize_alignment, normalize_hex_color
+from ..sheets import SheetReader, extract_sheet_id, normalize_alignment, normalize_hex_color, normalize_verified
+
+# MU mirror columns written by !pull_players. Deliberately separate from the
+# host-authored `role_name`, `alignment` and `alive` columns so a pull can never
+# overwrite host data or change what the resolver considers dead.
+MU_MIRROR_COLUMNS = ("mu_role_name", "mu_alignment", "mu_is_alive", "faction", "faction_color", "rolepm_verified")
 
 
 def _channel_id_from_arg(ctx, channel_arg: str | None) -> int:
@@ -140,16 +145,23 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
         state = sheet_reader.load_game_state(cfg.sheet_id)
         players_by_mu = {p.mu_username.lower(): p for p in state.players}
         _token, page_rows = await asyncio.to_thread(mu_client.fetch_deaths_page_state, cfg.game_id)
-        names_by_player: dict[str, str] = {}
+        values_by_player: dict[str, dict[str, str]] = {}
         unmatched = []
         for row in page_rows:
             player = players_by_mu.get(row["username"].lower())
             if player is None:
                 unmatched.append(row["username"])
                 continue
-            names_by_player[player.key] = row["role_name"]
-        written = await asyncio.to_thread(sheet_reader.write_mu_role_names, cfg.sheet_id, names_by_player)
-        msg = f"Pulled MU role names: {written} rows updated in `mu_role_name`."
+            values_by_player[player.key] = {
+                "mu_role_name": row["role_name"],
+                "mu_alignment": row["alignment"],
+                "mu_is_alive": "TRUE" if row["is_alive"] == "1" else "FALSE",
+                "faction": row["faction"],
+                "faction_color": row["faction_color"],
+                "rolepm_verified": "TRUE" if row["rolepm_verified"] == "1" else "FALSE",
+            }
+        written = await asyncio.to_thread(sheet_reader.write_mu_columns, cfg.sheet_id, values_by_player, MU_MIRROR_COLUMNS)
+        msg = f"Pulled MU player state: {written} rows updated across {', '.join(f'`{c}`' for c in MU_MIRROR_COLUMNS)}."
         if unmatched:
             msg += f" Could not match to sheet: {', '.join(unmatched)}."
         await ctx.reply(msg)
@@ -167,20 +179,26 @@ def register(bot, *, db: HostOpsDB, sheet_reader: SheetReader, mu_client: MUClie
         settings_by_username: dict[str, dict] = {}
         errors: list[str] = []
         for player in state.players:
-            alignment = normalize_alignment(player.alignment)
+            # Blank is always "inherit MU's live value"; only non-blank garbage
+            # is an error, so an unfilled column is a no-op rather than a wipe.
+            alignment = normalize_alignment(player.mu_alignment)
             if alignment is None:
-                errors.append(f"{player.player}: alignment {player.alignment!r} is not one of town/mafia/evil independent/neutral independent")
+                errors.append(f"{player.player}: mu_alignment {player.mu_alignment!r} is not one of town/mafia/evil independent/neutral independent")
                 continue
             color = normalize_hex_color(player.faction_color)
             if color is None:
                 errors.append(f"{player.player}: faction_color {player.faction_color!r} is not a hex colour")
+                continue
+            verified = normalize_verified(player.rolepm_verified)
+            if verified is None:
+                errors.append(f"{player.player}: rolepm_verified {player.rolepm_verified!r} is not a yes/no value")
                 continue
             settings_by_username[player.mu_username.lower()] = {
                 "role_name": player.mu_role_name,
                 "faction": player.faction,
                 "faction_color": color,
                 "alignment": alignment,
-                "rolepm_verified": "1" if player.rolepm_verified else "0",
+                "rolepm_verified": verified,
             }
         if errors:
             detail = "\n".join(f"- {e}" for e in errors[:10])

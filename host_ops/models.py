@@ -24,9 +24,12 @@ class Player:
     # kept separate from the host-authored ``role_name`` above; blank means
     # "inherit MU's current value" on push.
     mu_role_name: str = ""
+    mu_alignment: str = ""
     faction: str = ""
     faction_color: str = ""
-    rolepm_verified: bool = False
+    # Kept as the raw cell rather than a bool so that "absent" stays
+    # distinguishable from "explicitly not verified" -- blank inherits MU.
+    rolepm_verified: str = ""
 
     @property
     def key(self) -> str:

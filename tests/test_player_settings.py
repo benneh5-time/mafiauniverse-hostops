@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from host_ops.mu_client import MUClient
-from host_ops.sheets import normalize_alignment, normalize_hex_color
+from host_ops.sheets import normalize_alignment, normalize_hex_color, normalize_verified
 
 from test_mu_client import FakeResponse, _logged_in_session
 
@@ -202,14 +202,39 @@ def test_blank_mu_role_name_inherits_live_value():
     assert _posted_fields(session)["role_name[]"][2] == "Mafia Goon"
 
 
-def test_blank_faction_clears_rather_than_inherits():
-    """Town players legitimately have no faction, so empty must be sendable."""
+def test_every_sheet_owned_field_is_blank_inherit():
+    """A column the host has not added reads as blank for every player, so
+    blank must never overwrite MU's live value."""
     client, session = _client_for(SAMPLE)
     client.push_player_settings(10222, {"thejoker": {
-        "role_name": "Mafia Goon", "faction": "", "faction_color": "#ff2244",
-        "alignment": "mafia", "rolepm_verified": "0",
+        "role_name": "", "faction": "", "faction_color": "",
+        "alignment": "", "rolepm_verified": "",
     }})
-    assert _posted_fields(session)["faction[]"][2] == ""
+    posted = _posted_fields(session)
+    assert posted["role_name[]"][2] == "Mafia Goon"
+    assert posted["faction[]"][2] == "Mafia"
+    assert posted["faction_color[]"][2] == "#ff2244"
+    assert posted["alignment[]"][2] == "mafia"
+    assert posted["rolepm_verified[]"][2] == "0"
+
+
+def test_push_from_a_sheet_with_no_mu_columns_is_a_no_op():
+    """The realistic first run: every MU mirror column absent, so every player
+    matches by username but supplies nothing. Nothing on MU may change."""
+    client, session = _client_for(SAMPLE)
+    _token, before = client.fetch_deaths_page_state(10222)
+    blank = {"role_name": "", "faction": "", "faction_color": "", "alignment": "", "rolepm_verified": ""}
+
+    client.push_player_settings(10222, {r["username"].lower(): dict(blank) for r in before})
+
+    posted = _posted_fields(session)
+    for field, key in [
+        ("role_name[]", "role_name"), ("faction[]", "faction"),
+        ("faction_color[]", "faction_color"), ("alignment[]", "alignment"),
+        ("rolepm_verified[]", "rolepm_verified"), ("is_alive[]", "is_alive"),
+        ("vote_weight[]", "vote_weight"), ("rolepm_card[]", "rolepm_card"),
+    ]:
+        assert posted[field] == [r[key] for r in before], f"{field} changed on an empty-sheet push"
 
 
 def test_push_posts_to_deaths_endpoint_with_token():
@@ -243,9 +268,14 @@ def test_normalize_alignment_accepts_mu_values(value, expected):
     assert normalize_alignment(value) == expected
 
 
-@pytest.mark.parametrize("value", ["", "indep", "independent", "villager", None])
+@pytest.mark.parametrize("value", ["indep", "independent", "villager", "3p", "katz"])
 def test_normalize_alignment_rejects_unknown(value):
     assert normalize_alignment(value) is None
+
+
+@pytest.mark.parametrize("value", ["", "   ", None])
+def test_normalize_alignment_blank_means_inherit(value):
+    assert normalize_alignment(value) == ""
 
 
 @pytest.mark.parametrize("value,expected", [
@@ -258,6 +288,30 @@ def test_normalize_hex_color(value, expected):
     assert normalize_hex_color(value) == expected
 
 
-@pytest.mark.parametrize("value", ["", "green", "#12345", None])
+@pytest.mark.parametrize("value", ["green", "#12345", "#gggggg"])
 def test_normalize_hex_color_rejects_bad(value):
     assert normalize_hex_color(value) is None
+
+
+@pytest.mark.parametrize("value", ["", "   ", None])
+def test_normalize_hex_color_blank_means_inherit(value):
+    assert normalize_hex_color(value) == ""
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("1", "1"), ("TRUE", "1"), ("yes", "1"), ("Verified", "1"),
+    ("0", "0"), ("FALSE", "0"), ("no", "0"), ("Not Verified", "0"),
+])
+def test_normalize_verified(value, expected):
+    assert normalize_verified(value) == expected
+
+
+@pytest.mark.parametrize("value", ["", "   ", None])
+def test_normalize_verified_blank_means_inherit(value):
+    """A missing rolepm_verified column must not mark everyone Not Verified."""
+    assert normalize_verified(value) == ""
+
+
+@pytest.mark.parametrize("value", ["maybe", "pending", "2"])
+def test_normalize_verified_rejects_unknown(value):
+    assert normalize_verified(value) is None
